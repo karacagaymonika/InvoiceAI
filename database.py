@@ -3,6 +3,10 @@ from pathlib import Path
 from datetime import datetime
 
 
+# --------------------------------------------------
+# Database setup
+# --------------------------------------------------
+
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -73,6 +77,10 @@ def init_db():
     conn.close()
 
 
+# --------------------------------------------------
+# Helper functions
+# --------------------------------------------------
+
 def convert_quantity(value):
     if value is None:
         return 0
@@ -89,6 +97,10 @@ def convert_quantity(value):
     except ValueError:
         return 0
 
+
+# --------------------------------------------------
+# Save invoice and invoice items
+# --------------------------------------------------
 
 def save_invoice(invoice_data, line_items):
     init_db()
@@ -175,6 +187,10 @@ def save_invoice(invoice_data, line_items):
     return invoice_id
 
 
+# --------------------------------------------------
+# Read invoice data
+# --------------------------------------------------
+
 def get_invoices():
     init_db()
 
@@ -238,6 +254,32 @@ def get_invoice_items(invoice_id):
     return rows
 
 
+# --------------------------------------------------
+# Update and delete invoices
+# --------------------------------------------------
+
+def update_invoice_type(invoice_id, new_invoice_type):
+    init_db()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE invoices
+        SET invoice_type = ?
+        WHERE id = ?
+        """,
+        (
+            new_invoice_type,
+            invoice_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
 def delete_invoice(invoice_id):
     init_db()
 
@@ -263,6 +305,10 @@ def delete_invoice(invoice_id):
     conn.commit()
     conn.close()
 
+
+# --------------------------------------------------
+# Manual inventory adjustments
+# --------------------------------------------------
 
 def save_manual_adjustment(product_code, product_name, quantity_change, unit, reason):
     init_db()
@@ -323,7 +369,37 @@ def get_manual_adjustments():
     return rows
 
 
+def delete_manual_adjustment(adjustment_id):
+    init_db()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM inventory_adjustments
+        WHERE id = ?
+        """,
+        (adjustment_id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# --------------------------------------------------
+# Inventory calculation
+# --------------------------------------------------
+
 def get_inventory_summary():
+    """
+    Calculates current stock.
+
+    Purchase invoice = stock increases.
+    Sale invoice = stock decreases.
+    Manual adjustments can increase or decrease stock.
+    """
+
     init_db()
 
     conn = connect_db()
@@ -407,39 +483,3 @@ def get_inventory_summary():
     rows.sort(key=lambda row: row[1])
 
     return rows
-def update_invoice_type(invoice_id, new_invoice_type):
-    init_db()
-
-    conn = connect_db()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE invoices
-        SET invoice_type = ?
-        WHERE id = ?
-        """,
-        (
-            new_invoice_type,
-            invoice_id,
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-    def delete_manual_adjustment(adjustment_id):
-    init_db()
-
-    conn = connect_db()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        DELETE FROM inventory_adjustments
-        WHERE id = ?
-        """,
-        (adjustment_id,),
-    )
-
-    conn.commit()
-    conn.close()
