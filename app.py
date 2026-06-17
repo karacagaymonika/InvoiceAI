@@ -2,80 +2,57 @@ from pathlib import Path
 
 import streamlit as st
 
-from ocr import extract_text_from_pdf
+
+st.title("Invoice Processing AI")
+st.write("Upload an invoice PDF. The app will extract text and key invoice fields.")
 
 
-# -----------------------------
-# Page configuration
-# -----------------------------
-st.set_page_config(
-    page_title="Invoice Processing AI",
-    page_icon="📄",
-    layout="wide"
-)
-
-
-# -----------------------------
-# Folder setup
-# -----------------------------
 BASE_DIR = Path(__file__).parent
 INVOICES_DIR = BASE_DIR / "invoices"
-
 INVOICES_DIR.mkdir(exist_ok=True)
 
 
-# -----------------------------
-# App title
-# -----------------------------
-st.title("📄 Invoice Processing AI")
-st.write("Upload an invoice PDF. The app will save it and extract readable text.")
-
-
-# -----------------------------
-# File uploader
-# -----------------------------
 uploaded_file = st.file_uploader(
     "Upload Invoice",
     type=["pdf"]
 )
 
 
-# -----------------------------
-# Save uploaded invoice and extract text
-# -----------------------------
-if uploaded_file is not None:
+if uploaded_file:
     file_path = INVOICES_DIR / uploaded_file.name
 
     with open(file_path, "wb") as file:
         file.write(uploaded_file.getbuffer())
 
-    file_size_kb = round(uploaded_file.size / 1024, 2)
+    st.success(f"Uploaded and saved: {uploaded_file.name}")
 
-    st.success("Invoice uploaded and saved successfully!")
+    try:
+        from ocr import extract_text_from_pdf
+        from extractor import extract_invoice_fields
 
-    st.subheader("Uploaded File Details")
-    st.write(f"**File name:** {uploaded_file.name}")
-    st.write(f"**File size:** {file_size_kb} KB")
-    st.write(f"**Saved location:** `{file_path}`")
+        extracted_text = extract_text_from_pdf(file_path)
 
-    st.divider()
+        st.subheader("Extracted Invoice Text")
 
-    st.subheader("Extracted Invoice Text")
-
-    extracted_text = extract_text_from_pdf(file_path)
-
-    st.text_area(
-        "Extracted text",
-        extracted_text,
-        height=400
-    )
-
-    if "No readable text found" in extracted_text:
-        st.warning(
-            "This looks like a scanned/image invoice. We will add OCR support next."
+        st.text_area(
+            "Extracted text",
+            extracted_text,
+            height=300
         )
-    else:
-        st.success("Text extracted successfully.")
-else:
-    st.warning("Please upload a PDF invoice to begin.")
-    
+
+        st.subheader("Structured Invoice Fields")
+
+        extracted_fields = extract_invoice_fields(extracted_text)
+
+        st.table(
+            [
+                {"Field": key, "Extracted Value": value}
+                for key, value in extracted_fields.items()
+            ]
+        )
+
+        st.success("Structured extraction completed.")
+
+    except Exception as error:
+        st.error("Something went wrong while extracting invoice data.")
+        st.exception(error)
