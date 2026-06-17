@@ -4,8 +4,10 @@ import pandas as pd
 import streamlit as st
 
 from database import (
+    create_database_backup,
     delete_invoice,
     delete_manual_adjustment,
+    get_backup_files,
     get_inventory_summary,
     get_invoice_items,
     get_invoices,
@@ -52,6 +54,7 @@ TEXT = {
         "financial_tab": "💷 Financial Dashboard",
         "history_tab": "📜 Invoice History",
         "adjust_tab": "🛠️ Manual Adjustments",
+        "backup_tab": "🛡️ Safety / Backups",
 
         "upload_header": "Upload and Process Invoice",
         "upload_pdf": "Upload Invoice PDF",
@@ -174,6 +177,20 @@ TEXT = {
         "delete_selected_manual": "Delete Selected Manual Adjustment",
         "manual_deleted": "Manual adjustment deleted.",
         "no_manual": "No manual adjustments saved yet.",
+
+        "backup_header": "Safety and Database Backups",
+        "backup_explain": (
+            "Use this section to create a safe copy of the database before making important changes. "
+            "Backups protect the app data if something is deleted or changed by mistake."
+        ),
+        "backup_now": "Create Backup Now",
+        "backup_created": "Backup created successfully",
+        "latest_backups": "Latest Backup Files",
+        "no_backups": "No backups created yet.",
+        "backup_mum_note": (
+            "Recommendation: create a backup before uploading many invoices, deleting invoices, "
+            "or making manual stock corrections."
+        ),
     },
 
     "PL": {
@@ -193,6 +210,7 @@ TEXT = {
         "financial_tab": "💷 Finanse",
         "history_tab": "📜 Historia faktur",
         "adjust_tab": "🛠️ Korekty ręczne",
+        "backup_tab": "🛡️ Bezpieczeństwo / Kopie",
 
         "upload_header": "Wgraj i przetwórz fakturę",
         "upload_pdf": "Wgraj fakturę PDF",
@@ -315,6 +333,20 @@ TEXT = {
         "delete_selected_manual": "Usuń wybraną ręczną korektę",
         "manual_deleted": "Ręczna korekta została usunięta.",
         "no_manual": "Brak zapisanych ręcznych korekt.",
+
+        "backup_header": "Bezpieczeństwo i kopie zapasowe bazy danych",
+        "backup_explain": (
+            "W tej sekcji możesz utworzyć bezpieczną kopię bazy danych przed ważnymi zmianami. "
+            "Kopie zapasowe chronią dane aplikacji, jeśli coś zostanie usunięte lub zmienione przez pomyłkę."
+        ),
+        "backup_now": "Utwórz kopię zapasową teraz",
+        "backup_created": "Kopia zapasowa została utworzona",
+        "latest_backups": "Ostatnie kopie zapasowe",
+        "no_backups": "Brak utworzonych kopii zapasowych.",
+        "backup_mum_note": (
+            "Rekomendacja: utwórz kopię przed wgraniem wielu faktur, usuwaniem faktur "
+            "lub ręcznymi korektami magazynu."
+        ),
     },
 }
 
@@ -562,13 +594,14 @@ def build_financial_dataframe():
 # Tabs
 # --------------------------------------------------
 
-tab_upload, tab_inventory, tab_financial, tab_history, tab_adjust = st.tabs(
+tab_upload, tab_inventory, tab_financial, tab_history, tab_adjust, tab_backup = st.tabs(
     [
         t("upload_tab"),
         t("inventory_tab"),
         t("financial_tab"),
         t("history_tab"),
         t("adjust_tab"),
+        t("backup_tab"),
     ]
 )
 
@@ -1114,3 +1147,47 @@ with tab_adjust:
 
     else:
         st.info(t("no_manual"))
+
+
+# --------------------------------------------------
+# Safety / backup tab
+# --------------------------------------------------
+
+with tab_backup:
+    st.header(t("backup_header"))
+
+    st.write(t("backup_explain"))
+    st.info(t("backup_mum_note"))
+
+    if st.button(t("backup_now"), type="primary"):
+        backup_file = create_database_backup("manual")
+        st.success(f"{t('backup_created')}: {backup_file.name}")
+
+    st.divider()
+
+    st.subheader(t("latest_backups"))
+
+    backup_files = get_backup_files()
+
+    if backup_files:
+        backup_df = pd.DataFrame(
+            [
+                {
+                    "Backup File": backup_file.name,
+                    "Created At": pd.to_datetime(
+                        backup_file.stat().st_mtime,
+                        unit="s"
+                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "Size KB": round(backup_file.stat().st_size / 1024, 2),
+                }
+                for backup_file in backup_files[:10]
+            ]
+        )
+
+        st.dataframe(
+            backup_df,
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info(t("no_backups"))

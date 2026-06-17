@@ -1,4 +1,5 @@
 import sqlite3
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -8,8 +9,12 @@ from datetime import datetime
 # --------------------------------------------------
 
 BASE_DIR = Path(__file__).parent
+
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+BACKUP_DIR = BASE_DIR / "backups"
+BACKUP_DIR.mkdir(exist_ok=True)
 
 DB_PATH = DATA_DIR / "invoice_ai.db"
 
@@ -78,6 +83,51 @@ def init_db():
 
 
 # --------------------------------------------------
+# Backup functions
+# --------------------------------------------------
+
+def create_database_backup(reason="manual"):
+    """
+    Creates a timestamped backup copy of the SQLite database.
+
+    reason examples:
+    - manual
+    - before_save_invoice
+    - before_delete_invoice
+    - before_manual_adjustment
+    - before_delete_adjustment
+    """
+
+    init_db()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_reason = str(reason).strip().replace(" ", "_").lower()
+
+    backup_file = BACKUP_DIR / f"invoice_ai_backup_{safe_reason}_{timestamp}.db"
+
+    shutil.copy2(DB_PATH, backup_file)
+
+    return backup_file
+
+
+def get_backup_files():
+    """
+    Returns a list of backup database files.
+    Newest backups are shown first.
+    """
+
+    BACKUP_DIR.mkdir(exist_ok=True)
+
+    backup_files = sorted(
+        BACKUP_DIR.glob("invoice_ai_backup_*.db"),
+        key=lambda file: file.stat().st_mtime,
+        reverse=True,
+    )
+
+    return backup_files
+
+
+# --------------------------------------------------
 # Helper functions
 # --------------------------------------------------
 
@@ -104,6 +154,9 @@ def convert_quantity(value):
 
 def save_invoice(invoice_data, line_items):
     init_db()
+
+    # Safety backup before saving a new invoice
+    create_database_backup("before_save_invoice")
 
     conn = connect_db()
     cursor = conn.cursor()
@@ -261,6 +314,9 @@ def get_invoice_items(invoice_id):
 def update_invoice_type(invoice_id, new_invoice_type):
     init_db()
 
+    # Safety backup before changing invoice type
+    create_database_backup("before_update_invoice_type")
+
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -282,6 +338,9 @@ def update_invoice_type(invoice_id, new_invoice_type):
 
 def delete_invoice(invoice_id):
     init_db()
+
+    # Safety backup before deleting invoice
+    create_database_backup("before_delete_invoice")
 
     conn = connect_db()
     cursor = conn.cursor()
@@ -312,6 +371,9 @@ def delete_invoice(invoice_id):
 
 def save_manual_adjustment(product_code, product_name, quantity_change, unit, reason):
     init_db()
+
+    # Safety backup before manual stock adjustment
+    create_database_backup("before_manual_adjustment")
 
     conn = connect_db()
     cursor = conn.cursor()
@@ -371,6 +433,9 @@ def get_manual_adjustments():
 
 def delete_manual_adjustment(adjustment_id):
     init_db()
+
+    # Safety backup before deleting adjustment
+    create_database_backup("before_delete_adjustment")
 
     conn = connect_db()
     cursor = conn.cursor()
