@@ -1,4 +1,5 @@
 from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -191,6 +192,17 @@ TEXT = {
             "Recommendation: create a backup before uploading many invoices, deleting invoices, "
             "or making manual stock corrections."
         ),
+
+        "excel_exports_header": "Excel Exports",
+        "excel_exports_explain": (
+            "Download Excel copies of inventory, invoices, financial summaries and manual adjustments. "
+            "This gives you an extra safety copy outside the app."
+        ),
+        "download_full_excel": "Download Full Excel Report",
+        "download_inventory_excel": "Download Inventory Excel",
+        "download_invoices_excel": "Download Invoice History Excel",
+        "download_financial_excel": "Download Financial Summary Excel",
+        "download_manual_excel": "Download Manual Adjustments Excel",
     },
 
     "PL": {
@@ -347,6 +359,17 @@ TEXT = {
             "Rekomendacja: utwórz kopię przed wgraniem wielu faktur, usuwaniem faktur "
             "lub ręcznymi korektami magazynu."
         ),
+
+        "excel_exports_header": "Eksport do Excela",
+        "excel_exports_explain": (
+            "Pobierz kopie danych do Excela: magazyn, faktury, podsumowania finansowe i ręczne korekty. "
+            "To dodatkowa bezpieczna kopia poza aplikacją."
+        ),
+        "download_full_excel": "Pobierz pełny raport Excel",
+        "download_inventory_excel": "Pobierz magazyn Excel",
+        "download_invoices_excel": "Pobierz historię faktur Excel",
+        "download_financial_excel": "Pobierz podsumowanie finansowe Excel",
+        "download_manual_excel": "Pobierz korekty ręczne Excel",
     },
 }
 
@@ -383,6 +406,9 @@ COLUMN_LABELS = {
         "Raw Line": "Raw Line",
         "Quantity Change": "Quantity Change",
         "Reason": "Reason",
+        "Backup File": "Backup File",
+        "Created At": "Created At",
+        "Size KB": "Size KB",
     },
     "PL": {
         "Product Code": "Kod produktu",
@@ -415,6 +441,9 @@ COLUMN_LABELS = {
         "Raw Line": "Oryginalna linia",
         "Quantity Change": "Zmiana ilości",
         "Reason": "Powód",
+        "Backup File": "Plik kopii",
+        "Created At": "Utworzono",
+        "Size KB": "Rozmiar KB",
     },
 }
 
@@ -556,6 +585,36 @@ def build_invoice_dataframe():
     )
 
 
+def build_manual_adjustments_dataframe():
+    adjustment_rows = get_manual_adjustments()
+
+    if not adjustment_rows:
+        return pd.DataFrame(
+            columns=[
+                "ID",
+                "Product Code",
+                "Product Name",
+                "Quantity Change",
+                "Unit",
+                "Reason",
+                "Saved At",
+            ]
+        )
+
+    return pd.DataFrame(
+        adjustment_rows,
+        columns=[
+            "ID",
+            "Product Code",
+            "Product Name",
+            "Quantity Change",
+            "Unit",
+            "Reason",
+            "Saved At",
+        ]
+    )
+
+
 def build_financial_dataframe():
     invoices_df = build_invoice_dataframe()
 
@@ -588,6 +647,85 @@ def build_financial_dataframe():
     )
 
     return financial_df
+
+
+def dataframe_to_excel_bytes(dataframe, sheet_name="Data"):
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        dataframe.to_excel(writer, index=False, sheet_name=sheet_name)
+
+    output.seek(0)
+    return output
+
+
+def build_full_excel_report():
+    output = BytesIO()
+
+    inventory_df = build_inventory_dataframe()
+    invoices_df = build_invoice_dataframe()
+    financial_df = build_financial_dataframe()
+    manual_df = build_manual_adjustments_dataframe()
+
+    if not financial_df.empty:
+        monthly_summary = (
+            financial_df
+            .groupby("Month", dropna=False)[
+                [
+                    "Sales Income",
+                    "Purchase Cost",
+                    "Net Result",
+                    "Cash Impact",
+                ]
+            ]
+            .sum()
+            .reset_index()
+        )
+
+        yearly_summary = (
+            financial_df
+            .groupby("Year", dropna=False)[
+                [
+                    "Sales Income",
+                    "Purchase Cost",
+                    "Net Result",
+                    "Cash Impact",
+                ]
+            ]
+            .sum()
+            .reset_index()
+        )
+    else:
+        monthly_summary = pd.DataFrame(
+            columns=[
+                "Month",
+                "Sales Income",
+                "Purchase Cost",
+                "Net Result",
+                "Cash Impact",
+            ]
+        )
+
+        yearly_summary = pd.DataFrame(
+            columns=[
+                "Year",
+                "Sales Income",
+                "Purchase Cost",
+                "Net Result",
+                "Cash Impact",
+            ]
+        )
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        inventory_df.to_excel(writer, index=False, sheet_name="Inventory")
+        invoices_df.to_excel(writer, index=False, sheet_name="Invoices")
+        financial_df.to_excel(writer, index=False, sheet_name="Financial Records")
+        monthly_summary.to_excel(writer, index=False, sheet_name="Monthly Summary")
+        yearly_summary.to_excel(writer, index=False, sheet_name="Yearly Summary")
+        manual_df.to_excel(writer, index=False, sheet_name="Manual Adjustments")
+
+    output.seek(0)
+    return output
 
 
 # --------------------------------------------------
@@ -1150,7 +1288,7 @@ with tab_adjust:
 
 
 # --------------------------------------------------
-# Safety / backup tab
+# Safety / backup and Excel export tab
 # --------------------------------------------------
 
 with tab_backup:
@@ -1185,9 +1323,61 @@ with tab_backup:
         )
 
         st.dataframe(
-            backup_df,
+            translate_columns(backup_df),
             use_container_width=True,
             hide_index=True
         )
     else:
         st.info(t("no_backups"))
+
+    st.divider()
+
+    st.subheader(t("excel_exports_header"))
+    st.write(t("excel_exports_explain"))
+
+    export_date = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+
+    inventory_export_df = build_inventory_dataframe()
+    invoices_export_df = build_invoice_dataframe()
+    financial_export_df = build_financial_dataframe()
+    manual_export_df = build_manual_adjustments_dataframe()
+
+    st.download_button(
+        label=t("download_full_excel"),
+        data=build_full_excel_report(),
+        file_name=f"invoiceai_full_report_{export_date}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            label=t("download_inventory_excel"),
+            data=dataframe_to_excel_bytes(inventory_export_df, "Inventory"),
+            file_name=f"invoiceai_inventory_{export_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.download_button(
+            label=t("download_invoices_excel"),
+            data=dataframe_to_excel_bytes(invoices_export_df, "Invoices"),
+            file_name=f"invoiceai_invoices_{export_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with col2:
+        st.download_button(
+            label=t("download_financial_excel"),
+            data=dataframe_to_excel_bytes(financial_export_df, "Financial"),
+            file_name=f"invoiceai_financial_{export_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.download_button(
+            label=t("download_manual_excel"),
+            data=dataframe_to_excel_bytes(manual_export_df, "Manual Adjustments"),
+            file_name=f"invoiceai_manual_adjustments_{export_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
