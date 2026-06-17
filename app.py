@@ -5,6 +5,7 @@ import streamlit as st
 
 from database import (
     delete_invoice,
+    delete_manual_adjustment,
     get_inventory_summary,
     get_invoice_items,
     get_invoices,
@@ -13,11 +14,14 @@ from database import (
     save_invoice,
     save_manual_adjustment,
     update_invoice_type,
-    delete_manual_adjustment,
 )
 from extractor import extract_invoice_fields, extract_line_items
 from ocr import extract_text_from_pdf
 
+
+# --------------------------------------------------
+# Page setup
+# --------------------------------------------------
 
 st.set_page_config(
     page_title="Invoice Processing AI",
@@ -26,6 +30,393 @@ st.set_page_config(
 )
 
 
+# --------------------------------------------------
+# Language setup
+# --------------------------------------------------
+
+TEXT = {
+    "EN": {
+        "app_title": "📄 Invoice Processing AI + Inventory",
+        "intro": (
+            "Upload invoice PDFs, extract invoice data and product lines, "
+            "then save them into a database for stock and financial tracking."
+        ),
+        "demo_note": (
+            "Demo project using fake/test data only. Purchase invoices increase stock. "
+            "Shop sale invoices decrease stock."
+        ),
+        "language_label": "Language / Język",
+
+        "upload_tab": "📤 Upload Invoice",
+        "inventory_tab": "📦 Inventory Dashboard",
+        "financial_tab": "💷 Financial Dashboard",
+        "history_tab": "📜 Invoice History",
+        "adjust_tab": "🛠️ Manual Adjustments",
+
+        "upload_header": "Upload and Process Invoice",
+        "upload_pdf": "Upload Invoice PDF",
+        "uploaded_saved": "Uploaded and saved",
+        "view_extracted_text": "View extracted invoice text",
+        "extracted_text": "Extracted text",
+        "invoice_type": "Invoice Type",
+        "choose_invoice_type": "Choose invoice type",
+        "purchase_option": "Purchase invoice - stock IN / cost",
+        "sale_option": "Shop sale invoice - stock OUT / income",
+        "invoice_type_help": (
+            "Purchase invoice increases stock and counts as cost. "
+            "Shop sale invoice decreases stock and counts as income."
+        ),
+        "structured_fields": "Structured Invoice Fields",
+        "document_number": "Document number",
+        "document_date": "Document date",
+        "total_amount": "Total amount",
+        "supplier": "Supplier",
+        "buyer": "Buyer",
+        "product_lines": "Extracted Product Lines",
+        "manual_correct_info": (
+            "You can manually correct product names, quantities or prices before saving. "
+            "This is normal because invoice layouts vary."
+        ),
+        "purchase_info": "This invoice will ADD quantities to inventory and count as purchase cost.",
+        "sale_info": "This invoice will DEDUCT quantities from inventory and count as sales income.",
+        "save_invoice": "Save Invoice to Database",
+        "invoice_saved": "Invoice saved successfully. Invoice ID",
+        "extract_error": "Something went wrong while extracting invoice data.",
+        "upload_prompt": "Please upload a PDF invoice to begin.",
+
+        "inventory_header": "Inventory Dashboard",
+        "invoices_saved": "Invoices Saved",
+        "products_tracked": "Products Tracked",
+        "total_stock_quantity": "Total Stock Quantity",
+        "low_stock_items": "Low Stock Items",
+        "current_stock": "Current Stock",
+        "some_low_stock": "Some products have low stock.",
+        "no_low_stock": "No low stock items found.",
+        "no_inventory": "No inventory data yet. Save an invoice first.",
+
+        "financial_header": "Financial Dashboard",
+        "financial_explain": (
+            "This is an MVP-level financial view. Purchases are treated as costs, "
+            "sales are treated as income, and net result is sales minus purchases."
+        ),
+        "no_financial": "No financial data yet. Save invoices first.",
+        "sales_income": "Sales Income",
+        "purchase_costs": "Purchase Costs",
+        "net_result": "Net Result",
+        "cash_impact": "Cash Impact",
+        "financial_records": "Invoice Financial Records",
+        "monthly_summary": "Monthly Summary",
+        "yearly_summary": "Yearly Summary",
+        "profit_warning": (
+            "MVP note: this is not full accounting profit yet. True profit calculation needs "
+            "product cost, selling price, VAT handling, expenses and returns."
+        ),
+
+        "history_header": "Saved Invoice History",
+        "correct_invoice_type": "Correct Invoice Type",
+        "correct_invoice_help": (
+            "Use this if you accidentally saved a selling invoice as Purchase, "
+            "or a purchase invoice as Sale."
+        ),
+        "select_invoice_correct": "Select invoice ID to correct",
+        "new_invoice_type": "New invoice type",
+        "purchase_short": "Purchase",
+        "sale_short": "Sale",
+        "update_invoice_type": "Update Invoice Type",
+        "invoice_type_updated": "Invoice type updated.",
+        "view_invoice_items": "View Invoice Items",
+        "select_invoice_view": "Select invoice ID to view items",
+        "no_items": "No items found for this invoice.",
+        "delete_invoice": "Delete Invoice",
+        "delete_invoice_warning": (
+            "Deleting an invoice will also remove its product lines from inventory calculations."
+        ),
+        "select_invoice_delete": "Select invoice ID to delete",
+        "confirm_delete_invoice": (
+            "I understand this will delete the selected invoice and update inventory."
+        ),
+        "delete_selected_invoice": "Delete Selected Invoice",
+        "invoice_deleted": "Invoice deleted.",
+        "tick_confirm": "Please tick the confirmation box before deleting.",
+        "no_invoices": "No invoices saved yet.",
+
+        "manual_header": "Manual Inventory Adjustments",
+        "manual_explain": (
+            "Use this when stock needs correcting manually, for example damaged items, "
+            "missing stock, stock count correction, or items added without an invoice."
+        ),
+        "current_inventory_reference": "Current Inventory Reference",
+        "add_manual_adjustment": "Add Manual Adjustment",
+        "product_code": "Product code",
+        "product_name": "Product name",
+        "unit": "Unit",
+        "quantity_change": "Quantity change",
+        "quantity_change_help": (
+            "Use a positive number to add stock. Use a negative number to deduct stock."
+        ),
+        "reason": "Reason",
+        "reason_default": "Manual stock correction",
+        "manual_example": "Example: enter 5 to add 5 items. Enter -2 to deduct 2 items.",
+        "save_manual": "Save Manual Adjustment",
+        "product_required": "Product name is required.",
+        "quantity_zero": "Quantity change cannot be zero.",
+        "manual_saved": "Manual inventory adjustment saved.",
+        "manual_history": "Manual Adjustment History",
+        "delete_manual": "Delete Manual Adjustment",
+        "delete_manual_warning": (
+            "Use this only if a manual adjustment was added by mistake. "
+            "Deleting it will update the inventory calculation."
+        ),
+        "select_manual_delete": "Select manual adjustment ID to delete",
+        "confirm_delete_manual": (
+            "I understand this will delete the selected manual adjustment and update inventory."
+        ),
+        "delete_selected_manual": "Delete Selected Manual Adjustment",
+        "manual_deleted": "Manual adjustment deleted.",
+        "no_manual": "No manual adjustments saved yet.",
+    },
+
+    "PL": {
+        "app_title": "📄 Invoice Processing AI + Magazyn",
+        "intro": (
+            "Wgraj fakturę PDF, odczytaj dane z faktury i pozycje produktowe, "
+            "a następnie zapisz je do bazy danych, aby kontrolować magazyn i finanse."
+        ),
+        "demo_note": (
+            "Projekt demonstracyjny na danych testowych. Faktury zakupowe zwiększają stan magazynowy. "
+            "Faktury sprzedażowe sklepu zmniejszają stan magazynowy."
+        ),
+        "language_label": "Język / Language",
+
+        "upload_tab": "📤 Wgraj fakturę",
+        "inventory_tab": "📦 Magazyn",
+        "financial_tab": "💷 Finanse",
+        "history_tab": "📜 Historia faktur",
+        "adjust_tab": "🛠️ Korekty ręczne",
+
+        "upload_header": "Wgraj i przetwórz fakturę",
+        "upload_pdf": "Wgraj fakturę PDF",
+        "uploaded_saved": "Wgrano i zapisano",
+        "view_extracted_text": "Pokaż tekst odczytany z faktury",
+        "extracted_text": "Odczytany tekst",
+        "invoice_type": "Typ faktury",
+        "choose_invoice_type": "Wybierz typ faktury",
+        "purchase_option": "Faktura zakupowa - towar DO magazynu / koszt",
+        "sale_option": "Faktura sprzedażowa sklepu - towar Z magazynu / przychód",
+        "invoice_type_help": (
+            "Faktura zakupowa zwiększa stan magazynowy i liczy się jako koszt. "
+            "Faktura sprzedażowa zmniejsza stan magazynowy i liczy się jako przychód."
+        ),
+        "structured_fields": "Dane z faktury",
+        "document_number": "Numer dokumentu",
+        "document_date": "Data dokumentu",
+        "total_amount": "Kwota całkowita",
+        "supplier": "Sprzedawca / dostawca",
+        "buyer": "Nabywca / klient",
+        "product_lines": "Pozycje produktowe",
+        "manual_correct_info": (
+            "Możesz ręcznie poprawić nazwy produktów, ilości lub ceny przed zapisaniem. "
+            "To normalne, ponieważ faktury mają różne układy."
+        ),
+        "purchase_info": "Ta faktura DODA ilości do magazynu i zostanie policzona jako koszt zakupu.",
+        "sale_info": "Ta faktura ODEJMIE ilości z magazynu i zostanie policzona jako przychód ze sprzedaży.",
+        "save_invoice": "Zapisz fakturę do bazy danych",
+        "invoice_saved": "Faktura została zapisana. ID faktury",
+        "extract_error": "Wystąpił błąd podczas odczytywania danych z faktury.",
+        "upload_prompt": "Wgraj fakturę PDF, aby rozpocząć.",
+
+        "inventory_header": "Magazyn",
+        "invoices_saved": "Zapisane faktury",
+        "products_tracked": "Produkty w magazynie",
+        "total_stock_quantity": "Łączna ilość towaru",
+        "low_stock_items": "Produkty z niskim stanem",
+        "current_stock": "Aktualny stan magazynowy",
+        "some_low_stock": "Niektóre produkty mają niski stan magazynowy.",
+        "no_low_stock": "Brak produktów z niskim stanem.",
+        "no_inventory": "Brak danych magazynowych. Najpierw zapisz fakturę.",
+
+        "financial_header": "Panel finansowy",
+        "financial_explain": (
+            "To jest uproszczony widok finansowy MVP. Zakupy są traktowane jako koszty, "
+            "sprzedaż jako przychód, a wynik netto to sprzedaż minus zakupy."
+        ),
+        "no_financial": "Brak danych finansowych. Najpierw zapisz faktury.",
+        "sales_income": "Przychód ze sprzedaży",
+        "purchase_costs": "Koszty zakupów",
+        "net_result": "Wynik netto",
+        "cash_impact": "Wpływ na środki",
+        "financial_records": "Zapisy finansowe faktur",
+        "monthly_summary": "Podsumowanie miesięczne",
+        "yearly_summary": "Podsumowanie roczne",
+        "profit_warning": (
+            "Uwaga MVP: to nie jest jeszcze pełny zysk księgowy. Pełne obliczenie zysku wymaga "
+            "kosztu produktu, ceny sprzedaży, obsługi VAT, kosztów dodatkowych i zwrotów."
+        ),
+
+        "history_header": "Historia zapisanych faktur",
+        "correct_invoice_type": "Popraw typ faktury",
+        "correct_invoice_help": (
+            "Użyj tego, jeśli faktura sprzedażowa została przypadkowo zapisana jako zakupowa "
+            "albo faktura zakupowa jako sprzedażowa."
+        ),
+        "select_invoice_correct": "Wybierz ID faktury do poprawy",
+        "new_invoice_type": "Nowy typ faktury",
+        "purchase_short": "Zakup",
+        "sale_short": "Sprzedaż",
+        "update_invoice_type": "Zaktualizuj typ faktury",
+        "invoice_type_updated": "Typ faktury został zaktualizowany.",
+        "view_invoice_items": "Pokaż pozycje z faktury",
+        "select_invoice_view": "Wybierz ID faktury, aby zobaczyć pozycje",
+        "no_items": "Brak pozycji dla tej faktury.",
+        "delete_invoice": "Usuń fakturę",
+        "delete_invoice_warning": (
+            "Usunięcie faktury usunie również jej pozycje z obliczeń magazynowych."
+        ),
+        "select_invoice_delete": "Wybierz ID faktury do usunięcia",
+        "confirm_delete_invoice": (
+            "Rozumiem, że wybrana faktura zostanie usunięta, a magazyn zostanie przeliczony."
+        ),
+        "delete_selected_invoice": "Usuń wybraną fakturę",
+        "invoice_deleted": "Faktura została usunięta.",
+        "tick_confirm": "Zaznacz potwierdzenie przed usunięciem.",
+        "no_invoices": "Brak zapisanych faktur.",
+
+        "manual_header": "Ręczne korekty magazynu",
+        "manual_explain": (
+            "Użyj tego, gdy stan magazynowy wymaga ręcznej poprawy, np. uszkodzony towar, "
+            "braki, korekta po liczeniu magazynu albo towar dodany bez faktury."
+        ),
+        "current_inventory_reference": "Podgląd aktualnego magazynu",
+        "add_manual_adjustment": "Dodaj ręczną korektę",
+        "product_code": "Kod produktu",
+        "product_name": "Nazwa produktu",
+        "unit": "Jednostka",
+        "quantity_change": "Zmiana ilości",
+        "quantity_change_help": (
+            "Użyj liczby dodatniej, aby dodać towar. Użyj liczby ujemnej, aby odjąć towar."
+        ),
+        "reason": "Powód",
+        "reason_default": "Ręczna korekta magazynu",
+        "manual_example": "Przykład: wpisz 5, aby dodać 5 sztuk. Wpisz -2, aby odjąć 2 sztuki.",
+        "save_manual": "Zapisz ręczną korektę",
+        "product_required": "Nazwa produktu jest wymagana.",
+        "quantity_zero": "Zmiana ilości nie może wynosić zero.",
+        "manual_saved": "Ręczna korekta została zapisana.",
+        "manual_history": "Historia ręcznych korekt",
+        "delete_manual": "Usuń ręczną korektę",
+        "delete_manual_warning": (
+            "Użyj tego tylko wtedy, gdy korekta została dodana przez pomyłkę. "
+            "Usunięcie korekty przeliczy magazyn."
+        ),
+        "select_manual_delete": "Wybierz ID korekty do usunięcia",
+        "confirm_delete_manual": (
+            "Rozumiem, że wybrana ręczna korekta zostanie usunięta, a magazyn zostanie przeliczony."
+        ),
+        "delete_selected_manual": "Usuń wybraną ręczną korektę",
+        "manual_deleted": "Ręczna korekta została usunięta.",
+        "no_manual": "Brak zapisanych ręcznych korekt.",
+    },
+}
+
+
+COLUMN_LABELS = {
+    "EN": {
+        "Product Code": "Product Code",
+        "Product Name": "Product Name",
+        "Unit": "Unit",
+        "Current Stock": "Current Stock",
+        "ID": "ID",
+        "File Name": "File Name",
+        "Type": "Type",
+        "Document Number": "Document Number",
+        "Date": "Date",
+        "Supplier": "Supplier",
+        "Buyer": "Buyer",
+        "Total Amount": "Total Amount",
+        "Saved At": "Saved At",
+        "Sales Income": "Sales Income",
+        "Purchase Cost": "Purchase Cost",
+        "Net Result": "Net Result",
+        "Cash Impact": "Cash Impact",
+        "Month": "Month",
+        "Year": "Year",
+        "Item ID": "Item ID",
+        "Quantity": "Quantity",
+        "Unit Price": "Unit Price",
+        "Net Amount": "Net Amount",
+        "VAT Rate": "VAT Rate",
+        "VAT Amount": "VAT Amount",
+        "Gross Amount": "Gross Amount",
+        "Line Total": "Line Total",
+        "Raw Line": "Raw Line",
+        "Quantity Change": "Quantity Change",
+        "Reason": "Reason",
+    },
+    "PL": {
+        "Product Code": "Kod produktu",
+        "Product Name": "Nazwa produktu",
+        "Unit": "Jednostka",
+        "Current Stock": "Aktualny stan",
+        "ID": "ID",
+        "File Name": "Nazwa pliku",
+        "Type": "Typ",
+        "Document Number": "Numer dokumentu",
+        "Date": "Data",
+        "Supplier": "Sprzedawca / dostawca",
+        "Buyer": "Nabywca / klient",
+        "Total Amount": "Kwota całkowita",
+        "Saved At": "Zapisano",
+        "Sales Income": "Przychód ze sprzedaży",
+        "Purchase Cost": "Koszt zakupu",
+        "Net Result": "Wynik netto",
+        "Cash Impact": "Wpływ na środki",
+        "Month": "Miesiąc",
+        "Year": "Rok",
+        "Item ID": "ID pozycji",
+        "Quantity": "Ilość",
+        "Unit Price": "Cena jednostkowa",
+        "Net Amount": "Kwota netto",
+        "VAT Rate": "Stawka VAT",
+        "VAT Amount": "Kwota VAT",
+        "Gross Amount": "Kwota brutto",
+        "Line Total": "Suma pozycji",
+        "Raw Line": "Oryginalna linia",
+        "Quantity Change": "Zmiana ilości",
+        "Reason": "Powód",
+    },
+}
+
+
+language_choice = st.sidebar.selectbox(
+    "Language / Język",
+    ["Polski", "English"]
+)
+
+LANG = "PL" if language_choice == "Polski" else "EN"
+
+
+def t(key):
+    return TEXT[LANG].get(key, key)
+
+
+def translate_columns(dataframe):
+    return dataframe.rename(columns=COLUMN_LABELS[LANG])
+
+
+def translate_invoice_type(value):
+    if LANG == "PL":
+        if value == "Purchase":
+            return "Zakup"
+        if value == "Sale":
+            return "Sprzedaż"
+
+    return value
+
+
+# --------------------------------------------------
+# Paths and database
+# --------------------------------------------------
+
 BASE_DIR = Path(__file__).parent
 INVOICES_DIR = BASE_DIR / "invoices"
 INVOICES_DIR.mkdir(exist_ok=True)
@@ -33,17 +424,18 @@ INVOICES_DIR.mkdir(exist_ok=True)
 init_db()
 
 
-st.title("📄 Invoice Processing AI + Inventory")
-st.write(
-    "Upload invoice PDFs, extract invoice data and product lines, "
-    "then save them into a database for stock and financial tracking."
-)
+# --------------------------------------------------
+# Header
+# --------------------------------------------------
 
-st.info(
-    "Demo project using fake/test data only. Purchase invoices increase stock. "
-    "Shop sale invoices decrease stock."
-)
+st.title(t("app_title"))
+st.write(t("intro"))
+st.info(t("demo_note"))
 
+
+# --------------------------------------------------
+# Helper functions
+# --------------------------------------------------
 
 def parse_amount(amount_text):
     if amount_text is None:
@@ -166,22 +558,30 @@ def build_financial_dataframe():
     return financial_df
 
 
+# --------------------------------------------------
+# Tabs
+# --------------------------------------------------
+
 tab_upload, tab_inventory, tab_financial, tab_history, tab_adjust = st.tabs(
     [
-        "📤 Upload Invoice",
-        "📦 Inventory Dashboard",
-        "💷 Financial Dashboard",
-        "📜 Invoice History",
-        "🛠️ Manual Adjustments",
+        t("upload_tab"),
+        t("inventory_tab"),
+        t("financial_tab"),
+        t("history_tab"),
+        t("adjust_tab"),
     ]
 )
 
 
+# --------------------------------------------------
+# Upload invoice tab
+# --------------------------------------------------
+
 with tab_upload:
-    st.header("Upload and Process Invoice")
+    st.header(t("upload_header"))
 
     uploaded_file = st.file_uploader(
-        "Upload Invoice PDF",
+        t("upload_pdf"),
         type=["pdf"]
     )
 
@@ -191,71 +591,68 @@ with tab_upload:
         with open(file_path, "wb") as file:
             file.write(uploaded_file.getbuffer())
 
-        st.success(f"Uploaded and saved: {uploaded_file.name}")
+        st.success(f"{t('uploaded_saved')}: {uploaded_file.name}")
 
         try:
             extracted_text = extract_text_from_pdf(file_path)
             extracted_fields = extract_invoice_fields(extracted_text)
             line_items = extract_line_items(extracted_text)
 
-            with st.expander("View extracted invoice text", expanded=False):
+            with st.expander(t("view_extracted_text"), expanded=False):
                 st.text_area(
-                    "Extracted text",
+                    t("extracted_text"),
                     extracted_text,
                     height=300
                 )
 
-            st.subheader("Invoice Type")
+            st.subheader(t("invoice_type"))
 
             invoice_type_display = st.selectbox(
-                "Choose invoice type",
+                t("choose_invoice_type"),
                 [
-                    "Purchase invoice - stock IN / cost",
-                    "Shop sale invoice - stock OUT / income",
+                    t("purchase_option"),
+                    t("sale_option"),
                 ],
-                help=(
-                    "Purchase invoice increases stock and counts as cost. "
-                    "Shop sale invoice decreases stock and counts as income."
-                )
+                help=t("invoice_type_help")
             )
 
-            if invoice_type_display == "Purchase invoice - stock IN / cost":
+            if invoice_type_display == t("purchase_option"):
                 invoice_type = "Purchase"
             else:
                 invoice_type = "Sale"
 
-            st.subheader("Structured Invoice Fields")
+            st.subheader(t("structured_fields"))
 
             col1, col2 = st.columns(2)
 
             with col1:
                 document_number = st.text_input(
-                    "Document number",
+                    t("document_number"),
                     value=extracted_fields.get("document_number", "")
                 )
 
                 document_date = st.text_input(
-                    "Document date",
+                    t("document_date"),
                     value=extracted_fields.get("document_date", "")
                 )
 
                 total_amount = st.text_input(
-                    "Total amount",
+                    t("total_amount"),
                     value=extracted_fields.get("total_amount", "")
                 )
 
             with col2:
                 supplier = st.text_input(
-                    "Supplier",
+                    t("supplier"),
                     value=extracted_fields.get("supplier", "")
                 )
 
                 buyer = st.text_input(
-                    "Buyer",
+                    t("buyer"),
                     value=extracted_fields.get("buyer", "")
                 )
 
-            st.subheader("Extracted Product Lines")
+            st.subheader(t("product_lines"))
 
             product_columns = [
                 "product_code",
@@ -290,17 +687,14 @@ with tab_upload:
                 hide_index=True
             )
 
-            st.info(
-                "You can manually correct product names, quantities or prices before saving. "
-                "This is normal because invoice layouts vary."
-            )
+            st.info(t("manual_correct_info"))
 
             if invoice_type == "Purchase":
-                st.success("This invoice will ADD quantities to inventory and count as purchase cost.")
+                st.success(t("purchase_info"))
             else:
-                st.warning("This invoice will DEDUCT quantities from inventory and count as sales income.")
+                st.warning(t("sale_info"))
 
-            if st.button("Save Invoice to Database", type="primary"):
+            if st.button(t("save_invoice"), type="primary"):
                 invoice_data = {
                     "file_name": uploaded_file.name,
                     "invoice_type": invoice_type,
@@ -318,20 +712,22 @@ with tab_upload:
                     line_items=edited_line_items
                 )
 
-                st.success(
-                    f"Invoice saved successfully. Invoice ID: {saved_invoice_id}"
-                )
+                st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
 
         except Exception as error:
-            st.error("Something went wrong while extracting invoice data.")
+            st.error(t("extract_error"))
             st.exception(error)
 
     else:
-        st.warning("Please upload a PDF invoice to begin.")
+        st.warning(t("upload_prompt"))
 
+
+# --------------------------------------------------
+# Inventory dashboard tab
+# --------------------------------------------------
 
 with tab_inventory:
-    st.header("Inventory Dashboard")
+    st.header(t("inventory_header"))
 
     inventory_df = build_inventory_dataframe()
     invoices_df = build_invoice_dataframe()
@@ -348,54 +744,55 @@ with tab_inventory:
 
     card1, card2, card3, card4 = st.columns(4)
 
-    card1.metric("Invoices Saved", total_invoices)
-    card2.metric("Products Tracked", total_products)
-    card3.metric("Total Stock Quantity", total_stock)
-    card4.metric("Low Stock Items", low_stock_count)
+    card1.metric(t("invoices_saved"), total_invoices)
+    card2.metric(t("products_tracked"), total_products)
+    card3.metric(t("total_stock_quantity"), total_stock)
+    card4.metric(t("low_stock_items"), low_stock_count)
 
     st.divider()
 
-    st.subheader("Current Stock")
+    st.subheader(t("current_stock"))
 
     if not inventory_df.empty:
         st.dataframe(
-            inventory_df,
+            translate_columns(inventory_df),
             use_container_width=True,
             hide_index=True
         )
 
-        st.subheader("Low Stock Items")
+        st.subheader(t("low_stock_items"))
 
         low_stock_df = inventory_df[
             inventory_df["Current Stock"] <= 5
         ]
 
         if not low_stock_df.empty:
-            st.warning("Some products have low stock.")
+            st.warning(t("some_low_stock"))
             st.dataframe(
-                low_stock_df,
+                translate_columns(low_stock_df),
                 use_container_width=True,
                 hide_index=True
             )
         else:
-            st.success("No low stock items found.")
+            st.success(t("no_low_stock"))
 
     else:
-        st.info("No inventory data yet. Save an invoice first.")
+        st.info(t("no_inventory"))
 
+
+# --------------------------------------------------
+# Financial dashboard tab
+# --------------------------------------------------
 
 with tab_financial:
-    st.header("Financial Dashboard")
+    st.header(t("financial_header"))
 
-    st.write(
-        "This is an MVP-level financial view. Purchases are treated as costs, "
-        "sales are treated as income, and net result is sales minus purchases."
-    )
+    st.write(t("financial_explain"))
 
     financial_df = build_financial_dataframe()
 
     if financial_df.empty:
-        st.info("No financial data yet. Save invoices first.")
+        st.info(t("no_financial"))
     else:
         total_sales = financial_df["Sales Income"].sum()
         total_purchases = financial_df["Purchase Cost"].sum()
@@ -404,14 +801,14 @@ with tab_financial:
 
         card1, card2, card3, card4 = st.columns(4)
 
-        card1.metric("Sales Income", f"{total_sales:,.2f} PLN")
-        card2.metric("Purchase Costs", f"{total_purchases:,.2f} PLN")
-        card3.metric("Net Result", f"{net_result:,.2f} PLN")
-        card4.metric("Cash Impact", f"{total_cash_impact:,.2f} PLN")
+        card1.metric(t("sales_income"), f"{total_sales:,.2f} PLN")
+        card2.metric(t("purchase_costs"), f"{total_purchases:,.2f} PLN")
+        card3.metric(t("net_result"), f"{net_result:,.2f} PLN")
+        card4.metric(t("cash_impact"), f"{total_cash_impact:,.2f} PLN")
 
         st.divider()
 
-        st.subheader("Invoice Financial Records")
+        st.subheader(t("financial_records"))
 
         display_columns = [
             "ID",
@@ -427,13 +824,16 @@ with tab_financial:
             "Cash Impact",
         ]
 
+        financial_display_df = financial_df[display_columns].copy()
+        financial_display_df["Type"] = financial_display_df["Type"].apply(translate_invoice_type)
+
         st.dataframe(
-            financial_df[display_columns],
+            translate_columns(financial_display_df),
             use_container_width=True,
             hide_index=True
         )
 
-        st.subheader("Monthly Summary")
+        st.subheader(t("monthly_summary"))
 
         monthly_summary = (
             financial_df
@@ -450,12 +850,12 @@ with tab_financial:
         )
 
         st.dataframe(
-            monthly_summary,
+            translate_columns(monthly_summary),
             use_container_width=True,
             hide_index=True
         )
 
-        st.subheader("Yearly Summary")
+        st.subheader(t("yearly_summary"))
 
         yearly_summary = (
             financial_df
@@ -472,63 +872,70 @@ with tab_financial:
         )
 
         st.dataframe(
-            yearly_summary,
+            translate_columns(yearly_summary),
             use_container_width=True,
             hide_index=True
         )
 
-        st.warning(
-            "Important: this is not full accounting profit yet. "
-            "True profit needs product cost, selling price, VAT handling and expenses."
-        )
+        st.warning(t("profit_warning"))
 
+
+# --------------------------------------------------
+# Invoice history tab
+# --------------------------------------------------
 
 with tab_history:
-    st.header("Saved Invoice History")
+    st.header(t("history_header"))
 
     invoices_df = build_invoice_dataframe()
 
     if not invoices_df.empty:
+        display_invoices_df = invoices_df.copy()
+        display_invoices_df["Type"] = display_invoices_df["Type"].apply(translate_invoice_type)
+
         st.dataframe(
-            invoices_df,
+            translate_columns(display_invoices_df),
             use_container_width=True,
             hide_index=True
         )
 
         invoice_ids = invoices_df["ID"].tolist()
 
-        st.subheader("Correct Invoice Type")
+        st.subheader(t("correct_invoice_type"))
 
-        st.write(
-            "Use this if you accidentally saved a selling invoice as Purchase, "
-            "or a purchase invoice as Sale."
-        )
+        st.write(t("correct_invoice_help"))
 
         correction_invoice_id = st.selectbox(
-            "Select invoice ID to correct",
+            t("select_invoice_correct"),
             invoice_ids,
             key="correction_invoice_id"
         )
 
-        corrected_type = st.selectbox(
-            "New invoice type",
-            ["Purchase", "Sale"],
+        corrected_type_display = st.selectbox(
+            t("new_invoice_type"),
+            [
+                t("purchase_short"),
+                t("sale_short"),
+            ],
             key="corrected_type"
         )
 
-        if st.button("Update Invoice Type"):
+        if corrected_type_display == t("purchase_short"):
+            corrected_type = "Purchase"
+        else:
+            corrected_type = "Sale"
+
+        if st.button(t("update_invoice_type")):
             update_invoice_type(correction_invoice_id, corrected_type)
-            st.success(
-                f"Invoice ID {correction_invoice_id} updated to {corrected_type}."
-            )
+            st.success(t("invoice_type_updated"))
             st.rerun()
 
         st.divider()
 
-        st.subheader("View Invoice Items")
+        st.subheader(t("view_invoice_items"))
 
         selected_invoice_id = st.selectbox(
-            "Select invoice ID to view items",
+            t("select_invoice_view"),
             invoice_ids,
             key="view_invoice_id"
         )
@@ -555,95 +962,93 @@ with tab_history:
             )
 
             st.dataframe(
-                items_df,
+                translate_columns(items_df),
                 use_container_width=True,
                 hide_index=True
             )
         else:
-            st.info("No items found for this invoice.")
+            st.info(t("no_items"))
 
         st.divider()
 
-        st.subheader("Delete Invoice")
+        st.subheader(t("delete_invoice"))
 
-        st.warning(
-            "Deleting an invoice will also remove its product lines from inventory calculations."
-        )
+        st.warning(t("delete_invoice_warning"))
 
         delete_invoice_id = st.selectbox(
-            "Select invoice ID to delete",
+            t("select_invoice_delete"),
             invoice_ids,
             key="delete_invoice_id"
         )
 
         confirm_delete = st.checkbox(
-            "I understand this will delete the selected invoice and update inventory."
+            t("confirm_delete_invoice"),
+            key="confirm_delete_invoice"
         )
 
-        if st.button("Delete Selected Invoice"):
+        if st.button(t("delete_selected_invoice")):
             if confirm_delete:
                 delete_invoice(delete_invoice_id)
-                st.success(f"Invoice ID {delete_invoice_id} deleted.")
+                st.success(t("invoice_deleted"))
                 st.rerun()
             else:
-                st.error("Please tick the confirmation box before deleting.")
+                st.error(t("tick_confirm"))
 
     else:
-        st.info("No invoices saved yet.")
+        st.info(t("no_invoices"))
 
+
+# --------------------------------------------------
+# Manual adjustments tab
+# --------------------------------------------------
 
 with tab_adjust:
-    st.header("Manual Inventory Adjustments")
+    st.header(t("manual_header"))
 
-    st.write(
-        "Use this when stock needs correcting manually, for example damaged items, "
-        "missing stock, stock count correction, or items added without an invoice."
-    )
+    st.write(t("manual_explain"))
 
     inventory_df = build_inventory_dataframe()
 
-    st.subheader("Current Inventory Reference")
+    st.subheader(t("current_inventory_reference"))
 
     if not inventory_df.empty:
         st.dataframe(
-            inventory_df,
+            translate_columns(inventory_df),
             use_container_width=True,
             hide_index=True
         )
     else:
-        st.info("No inventory data yet.")
+        st.info(t("no_inventory"))
 
-    st.subheader("Add Manual Adjustment")
+    st.subheader(t("add_manual_adjustment"))
 
     col1, col2 = st.columns(2)
 
     with col1:
-        product_code = st.text_input("Product code")
-        product_name = st.text_input("Product name")
-        unit = st.text_input("Unit", value="szt")
+        product_code = st.text_input(t("product_code"))
+        product_name = st.text_input(t("product_name"))
+        unit = st.text_input(t("unit"), value="szt")
 
     with col2:
         quantity_change = st.number_input(
-            "Quantity change",
+            t("quantity_change"),
             value=0.0,
             step=1.0,
-            help="Use a positive number to add stock. Use a negative number to deduct stock."
+            help=t("quantity_change_help")
         )
 
         reason = st.text_input(
-            "Reason",
-            value="Manual stock correction"
+            t("reason"),
+            value=t("reason_default")
         )
 
-    st.info(
-        "Example: enter 5 to add 5 items. Enter -2 to deduct 2 items."
-    )
+    st.info(t("manual_example"))
 
-    if st.button("Save Manual Adjustment", type="primary"):
+    if st.button(t("save_manual"), type="primary"):
         if not product_name.strip():
-            st.error("Product name is required.")
+            st.error(t("product_required"))
         elif quantity_change == 0:
-            st.error("Quantity change cannot be zero.")
+            st.error(t("quantity_zero"))
         else:
             save_manual_adjustment(
                 product_code=product_code,
@@ -653,12 +1058,12 @@ with tab_adjust:
                 reason=reason,
             )
 
-            st.success("Manual inventory adjustment saved.")
+            st.success(t("manual_saved"))
             st.rerun()
 
     st.divider()
 
-    st.subheader("Manual Adjustment History")
+    st.subheader(t("manual_history"))
 
     adjustment_rows = get_manual_adjustments()
 
@@ -677,38 +1082,35 @@ with tab_adjust:
         )
 
         st.dataframe(
-            adjustments_df,
+            translate_columns(adjustments_df),
             use_container_width=True,
             hide_index=True
         )
 
-        st.subheader("Delete Manual Adjustment")
+        st.subheader(t("delete_manual"))
 
-        st.warning(
-            "Use this only if a manual adjustment was added by mistake. "
-            "Deleting it will update the inventory calculation."
-        )
+        st.warning(t("delete_manual_warning"))
 
         adjustment_ids = adjustments_df["ID"].tolist()
 
         selected_adjustment_id = st.selectbox(
-            "Select manual adjustment ID to delete",
+            t("select_manual_delete"),
             adjustment_ids,
             key="delete_adjustment_id"
         )
 
         confirm_delete_adjustment = st.checkbox(
-            "I understand this will delete the selected manual adjustment and update inventory.",
+            t("confirm_delete_manual"),
             key="confirm_delete_adjustment"
         )
 
-        if st.button("Delete Selected Manual Adjustment"):
+        if st.button(t("delete_selected_manual")):
             if confirm_delete_adjustment:
                 delete_manual_adjustment(selected_adjustment_id)
-                st.success(f"Manual adjustment ID {selected_adjustment_id} deleted.")
+                st.success(t("manual_deleted"))
                 st.rerun()
             else:
-                st.error("Please tick the confirmation box before deleting.")
+                st.error(t("tick_confirm"))
 
     else:
-        st.info("No manual adjustments saved yet.")
+        st.info(t("no_manual"))
