@@ -45,19 +45,23 @@ TEXT = {
             "then save them into a database for stock and financial tracking."
         ),
         "demo_note": (
-            "Demo project using fake/test data only. Purchase invoices increase stock. "
-            "Shop sale invoices decrease stock."
+            "Demo/test version. Please keep original invoices and Excel exports as backup. "
+            "Purchase invoices increase stock. Shop sale invoices decrease stock."
         ),
         "language_label": "Language / Język",
 
-        "upload_tab": "📤 Upload Invoice",
+        "upload_tab": "📤 Add Invoice",
         "inventory_tab": "📦 Inventory Dashboard",
         "financial_tab": "💷 Financial Dashboard",
         "history_tab": "📜 Invoice History",
         "adjust_tab": "🛠️ Manual Adjustments",
         "backup_tab": "🛡️ Safety / Backups",
 
-        "upload_header": "Upload and Process Invoice",
+        "upload_header": "Add and Process Invoice",
+        "entry_method": "Choose invoice entry method",
+        "pdf_entry": "Upload PDF invoice",
+        "manual_entry": "Enter invoice manually",
+
         "upload_pdf": "Upload Invoice PDF",
         "uploaded_saved": "Uploaded and saved",
         "view_extracted_text": "View extracted invoice text",
@@ -70,13 +74,13 @@ TEXT = {
             "Purchase invoice increases stock and counts as cost. "
             "Shop sale invoice decreases stock and counts as income."
         ),
-        "structured_fields": "Structured Invoice Fields",
+        "structured_fields": "Invoice Details",
         "document_number": "Document number",
         "document_date": "Document date",
         "total_amount": "Total amount",
         "supplier": "Supplier",
         "buyer": "Buyer",
-        "product_lines": "Extracted Product Lines",
+        "product_lines": "Product Lines",
         "manual_correct_info": (
             "You can manually correct product names, quantities or prices before saving. "
             "This is normal because invoice layouts vary."
@@ -87,6 +91,16 @@ TEXT = {
         "invoice_saved": "Invoice saved successfully. Invoice ID",
         "extract_error": "Something went wrong while extracting invoice data.",
         "upload_prompt": "Please upload a PDF invoice to begin.",
+
+        "manual_invoice_header": "Manual Invoice Entry",
+        "manual_invoice_info": (
+            "Use this option if PDF upload or extraction does not work. "
+            "You can type invoice details and product lines manually."
+        ),
+        "manual_file_name": "Manual entry file name / reference",
+        "manual_product_table": "Manual Product Lines",
+        "save_manual_invoice": "Save Manual Invoice",
+        "manual_invoice_saved": "Manual invoice saved successfully. Invoice ID",
 
         "inventory_header": "Inventory Dashboard",
         "invoices_saved": "Invoices Saved",
@@ -212,19 +226,23 @@ TEXT = {
             "a następnie zapisz je do bazy danych, aby kontrolować magazyn i finanse."
         ),
         "demo_note": (
-            "Projekt demonstracyjny na danych testowych. Faktury zakupowe zwiększają stan magazynowy. "
-            "Faktury sprzedażowe sklepu zmniejszają stan magazynowy."
+            "Wersja testowa. Zachowuj oryginalne faktury i eksporty Excel jako kopię bezpieczeństwa. "
+            "Faktury zakupowe zwiększają stan magazynowy. Faktury sprzedażowe sklepu zmniejszają stan magazynowy."
         ),
         "language_label": "Język / Language",
 
-        "upload_tab": "📤 Wgraj fakturę",
+        "upload_tab": "📤 Dodaj fakturę",
         "inventory_tab": "📦 Magazyn",
         "financial_tab": "💷 Finanse",
         "history_tab": "📜 Historia faktur",
         "adjust_tab": "🛠️ Korekty ręczne",
         "backup_tab": "🛡️ Bezpieczeństwo / Kopie",
 
-        "upload_header": "Wgraj i przetwórz fakturę",
+        "upload_header": "Dodaj i przetwórz fakturę",
+        "entry_method": "Wybierz sposób dodania faktury",
+        "pdf_entry": "Wgraj fakturę PDF",
+        "manual_entry": "Wpisz fakturę ręcznie",
+
         "upload_pdf": "Wgraj fakturę PDF",
         "uploaded_saved": "Wgrano i zapisano",
         "view_extracted_text": "Pokaż tekst odczytany z faktury",
@@ -237,7 +255,7 @@ TEXT = {
             "Faktura zakupowa zwiększa stan magazynowy i liczy się jako koszt. "
             "Faktura sprzedażowa zmniejsza stan magazynowy i liczy się jako przychód."
         ),
-        "structured_fields": "Dane z faktury",
+        "structured_fields": "Dane faktury",
         "document_number": "Numer dokumentu",
         "document_date": "Data dokumentu",
         "total_amount": "Kwota całkowita",
@@ -254,6 +272,16 @@ TEXT = {
         "invoice_saved": "Faktura została zapisana. ID faktury",
         "extract_error": "Wystąpił błąd podczas odczytywania danych z faktury.",
         "upload_prompt": "Wgraj fakturę PDF, aby rozpocząć.",
+
+        "manual_invoice_header": "Ręczne dodanie faktury",
+        "manual_invoice_info": (
+            "Użyj tej opcji, jeśli wgrywanie PDF lub odczyt faktury nie działa. "
+            "Możesz ręcznie wpisać dane faktury i pozycje produktowe."
+        ),
+        "manual_file_name": "Nazwa / numer referencyjny wpisu ręcznego",
+        "manual_product_table": "Ręczne pozycje produktowe",
+        "save_manual_invoice": "Zapisz ręczną fakturę",
+        "manual_invoice_saved": "Ręczna faktura została zapisana. ID faktury",
 
         "inventory_header": "Magazyn",
         "invoices_saved": "Zapisane faktury",
@@ -745,152 +773,297 @@ tab_upload, tab_inventory, tab_financial, tab_history, tab_adjust, tab_backup = 
 
 
 # --------------------------------------------------
-# Upload invoice tab
+# Add invoice tab
 # --------------------------------------------------
 
 with tab_upload:
     st.header(t("upload_header"))
 
-    uploaded_file = st.file_uploader(
-        t("upload_pdf"),
-        type=["pdf"]
+    entry_method = st.radio(
+        t("entry_method"),
+        [
+            t("pdf_entry"),
+            t("manual_entry"),
+        ],
+        horizontal=True
     )
 
-    if uploaded_file:
-        file_path = INVOICES_DIR / uploaded_file.name
+    product_columns = [
+        "product_code",
+        "product_name",
+        "quantity",
+        "unit",
+        "unit_price",
+        "net_amount",
+        "vat_rate",
+        "vat_amount",
+        "gross_amount",
+        "line_total",
+        "raw_line",
+    ]
 
-        with open(file_path, "wb") as file:
-            file.write(uploaded_file.getbuffer())
+    if entry_method == t("pdf_entry"):
+        uploaded_file = st.file_uploader(
+            t("upload_pdf"),
+            type=["pdf"]
+        )
 
-        st.success(f"{t('uploaded_saved')}: {uploaded_file.name}")
+        if uploaded_file:
+            file_path = INVOICES_DIR / uploaded_file.name
 
-        try:
-            extracted_text = extract_text_from_pdf(file_path)
-            extracted_fields = extract_invoice_fields(extracted_text)
-            line_items = extract_line_items(extracted_text)
+            with open(file_path, "wb") as file:
+                file.write(uploaded_file.getbuffer())
 
-            with st.expander(t("view_extracted_text"), expanded=False):
-                st.text_area(
-                    t("extracted_text"),
-                    extracted_text,
-                    height=300
+            st.success(f"{t('uploaded_saved')}: {uploaded_file.name}")
+
+            try:
+                extracted_text = extract_text_from_pdf(file_path)
+                extracted_fields = extract_invoice_fields(extracted_text)
+                line_items = extract_line_items(extracted_text)
+
+                with st.expander(t("view_extracted_text"), expanded=False):
+                    st.text_area(
+                        t("extracted_text"),
+                        extracted_text,
+                        height=300
+                    )
+
+                st.subheader(t("invoice_type"))
+
+                invoice_type_display = st.selectbox(
+                    t("choose_invoice_type"),
+                    [
+                        t("purchase_option"),
+                        t("sale_option"),
+                    ],
+                    help=t("invoice_type_help"),
+                    key="pdf_invoice_type"
                 )
 
-            st.subheader(t("invoice_type"))
+                if invoice_type_display == t("purchase_option"):
+                    invoice_type = "Purchase"
+                else:
+                    invoice_type = "Sale"
 
-            invoice_type_display = st.selectbox(
-                t("choose_invoice_type"),
-                [
-                    t("purchase_option"),
-                    t("sale_option"),
-                ],
-                help=t("invoice_type_help")
-            )
+                st.subheader(t("structured_fields"))
 
-            if invoice_type_display == t("purchase_option"):
-                invoice_type = "Purchase"
-            else:
-                invoice_type = "Sale"
+                col1, col2 = st.columns(2)
 
-            st.subheader(t("structured_fields"))
+                with col1:
+                    document_number = st.text_input(
+                        t("document_number"),
+                        value=extracted_fields.get("document_number", ""),
+                        key="pdf_document_number"
+                    )
 
-            col1, col2 = st.columns(2)
+                    document_date = st.text_input(
+                        t("document_date"),
+                        value=extracted_fields.get("document_date", ""),
+                        key="pdf_document_date"
+                    )
 
-            with col1:
-                document_number = st.text_input(
-                    t("document_number"),
-                    value=extracted_fields.get("document_number", "")
+                    total_amount = st.text_input(
+                        t("total_amount"),
+                        value=extracted_fields.get("total_amount", ""),
+                        key="pdf_total_amount"
+                    )
+
+                with col2:
+                    supplier = st.text_input(
+                        t("supplier"),
+                        value=extracted_fields.get("supplier", ""),
+                        key="pdf_supplier"
+                    )
+
+                    buyer = st.text_input(
+                        t("buyer"),
+                        value=extracted_fields.get("buyer", ""),
+                        key="pdf_buyer"
+                    )
+
+                st.subheader(t("product_lines"))
+
+                if line_items:
+                    items_df = pd.DataFrame(line_items)
+
+                    for column in product_columns:
+                        if column not in items_df.columns:
+                            items_df[column] = ""
+
+                    items_df = items_df[product_columns]
+
+                else:
+                    items_df = pd.DataFrame(columns=product_columns)
+
+                edited_items_df = st.data_editor(
+                    items_df,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    key="pdf_items_editor"
                 )
 
-                document_date = st.text_input(
-                    t("document_date"),
-                    value=extracted_fields.get("document_date", "")
-                )
+                st.info(t("manual_correct_info"))
 
-                total_amount = st.text_input(
-                    t("total_amount"),
-                    value=extracted_fields.get("total_amount", "")
-                )
+                if invoice_type == "Purchase":
+                    st.success(t("purchase_info"))
+                else:
+                    st.warning(t("sale_info"))
 
-            with col2:
-                supplier = st.text_input(
-                    t("supplier"),
-                    value=extracted_fields.get("supplier", "")
-                )
+                if st.button(t("save_invoice"), type="primary", key="save_pdf_invoice"):
+                    invoice_data = {
+                        "file_name": uploaded_file.name,
+                        "invoice_type": invoice_type,
+                        "document_number": document_number,
+                        "document_date": document_date,
+                        "supplier": supplier,
+                        "buyer": buyer,
+                        "total_amount": total_amount,
+                    }
 
-                buyer = st.text_input(
-                    t("buyer"),
-                    value=extracted_fields.get("buyer", "")
-                )
+                    edited_line_items = edited_items_df.fillna("").to_dict("records")
 
-            st.subheader(t("product_lines"))
+                    saved_invoice_id = save_invoice(
+                        invoice_data=invoice_data,
+                        line_items=edited_line_items
+                    )
 
-            product_columns = [
-                "product_code",
-                "product_name",
-                "quantity",
-                "unit",
-                "unit_price",
-                "net_amount",
-                "vat_rate",
-                "vat_amount",
-                "gross_amount",
-                "line_total",
-                "raw_line",
-            ]
+                    st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
+                    st.rerun()
 
-            if line_items:
-                items_df = pd.DataFrame(line_items)
+            except Exception as error:
+                st.error(t("extract_error"))
+                st.exception(error)
 
-                for column in product_columns:
-                    if column not in items_df.columns:
-                        items_df[column] = ""
-
-                items_df = items_df[product_columns]
-
-            else:
-                items_df = pd.DataFrame(columns=product_columns)
-
-            edited_items_df = st.data_editor(
-                items_df,
-                use_container_width=True,
-                num_rows="dynamic",
-                hide_index=True
-            )
-
-            st.info(t("manual_correct_info"))
-
-            if invoice_type == "Purchase":
-                st.success(t("purchase_info"))
-            else:
-                st.warning(t("sale_info"))
-
-            if st.button(t("save_invoice"), type="primary"):
-                invoice_data = {
-                    "file_name": uploaded_file.name,
-                    "invoice_type": invoice_type,
-                    "document_number": document_number,
-                    "document_date": document_date,
-                    "supplier": supplier,
-                    "buyer": buyer,
-                    "total_amount": total_amount,
-                }
-
-                edited_line_items = edited_items_df.fillna("").to_dict("records")
-
-                saved_invoice_id = save_invoice(
-                    invoice_data=invoice_data,
-                    line_items=edited_line_items
-                )
-
-                st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
-
-        except Exception as error:
-            st.error(t("extract_error"))
-            st.exception(error)
+        else:
+            st.warning(t("upload_prompt"))
 
     else:
-        st.warning(t("upload_prompt"))
+        st.subheader(t("manual_invoice_header"))
+        st.info(t("manual_invoice_info"))
+
+        st.subheader(t("invoice_type"))
+
+        manual_invoice_type_display = st.selectbox(
+            t("choose_invoice_type"),
+            [
+                t("purchase_option"),
+                t("sale_option"),
+            ],
+            help=t("invoice_type_help"),
+            key="manual_invoice_type"
+        )
+
+        if manual_invoice_type_display == t("purchase_option"):
+            manual_invoice_type = "Purchase"
+        else:
+            manual_invoice_type = "Sale"
+
+        if manual_invoice_type == "Purchase":
+            st.success(t("purchase_info"))
+        else:
+            st.warning(t("sale_info"))
+
+        st.subheader(t("structured_fields"))
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            manual_file_name = st.text_input(
+                t("manual_file_name"),
+                value="Manual invoice entry",
+                key="manual_file_name"
+            )
+
+            manual_document_number = st.text_input(
+                t("document_number"),
+                key="manual_document_number"
+            )
+
+            manual_document_date = st.text_input(
+                t("document_date"),
+                key="manual_document_date"
+            )
+
+            manual_total_amount = st.text_input(
+                t("total_amount"),
+                key="manual_total_amount"
+            )
+
+        with col2:
+            manual_supplier = st.text_input(
+                t("supplier"),
+                key="manual_supplier"
+            )
+
+            manual_buyer = st.text_input(
+                t("buyer"),
+                key="manual_buyer"
+            )
+
+        st.subheader(t("manual_product_table"))
+
+        default_manual_items = pd.DataFrame(
+            [
+                {
+                    "product_code": "",
+                    "product_name": "",
+                    "quantity": 1,
+                    "unit": "szt",
+                    "unit_price": "",
+                    "net_amount": "",
+                    "vat_rate": "",
+                    "vat_amount": "",
+                    "gross_amount": "",
+                    "line_total": "",
+                    "raw_line": "",
+                }
+            ],
+            columns=product_columns
+        )
+
+        manual_items_df = st.data_editor(
+            default_manual_items,
+            use_container_width=True,
+            num_rows="dynamic",
+            hide_index=True,
+            key="manual_items_editor"
+        )
+
+        st.info(t("manual_correct_info"))
+
+        if st.button(t("save_manual_invoice"), type="primary", key="save_manual_invoice"):
+            manual_invoice_data = {
+                "file_name": manual_file_name,
+                "invoice_type": manual_invoice_type,
+                "document_number": manual_document_number,
+                "document_date": manual_document_date,
+                "supplier": manual_supplier,
+                "buyer": manual_buyer,
+                "total_amount": manual_total_amount,
+            }
+
+            manual_line_items = manual_items_df.fillna("").to_dict("records")
+
+            cleaned_manual_line_items = []
+
+            for item in manual_line_items:
+                product_name = str(item.get("product_name", "")).strip()
+                raw_line = str(item.get("raw_line", "")).strip()
+
+                if product_name or raw_line:
+                    cleaned_manual_line_items.append(item)
+
+            if not cleaned_manual_line_items:
+                st.error(t("product_required"))
+            else:
+                saved_invoice_id = save_invoice(
+                    invoice_data=manual_invoice_data,
+                    line_items=cleaned_manual_line_items
+                )
+
+                st.success(f"{t('manual_invoice_saved')}: {saved_invoice_id}")
+                st.rerun()
 
 
 # --------------------------------------------------
