@@ -1068,6 +1068,17 @@ with tab_upload:
 
         st.subheader(t("manual_product_table"))
 
+        # Simplified manual entry table.
+        # Only these columns are shown to the user.
+        manual_product_columns = [
+            "product_code",
+            "product_name",
+            "quantity",
+            "unit",
+            "unit_price",
+            "line_total",
+        ]
+
         default_manual_items = pd.DataFrame(
             [
                 {
@@ -1076,15 +1087,10 @@ with tab_upload:
                     "quantity": 1,
                     "unit": "szt",
                     "unit_price": "",
-                    "net_amount": "",
-                    "vat_rate": "",
-                    "vat_amount": "",
-                    "gross_amount": "",
                     "line_total": "",
-                    "raw_line": "",
                 }
             ],
-            columns=product_columns
+            columns=manual_product_columns
         )
 
         manual_items_df = st.data_editor(
@@ -1114,10 +1120,23 @@ with tab_upload:
 
             for item in manual_line_items:
                 product_name = str(item.get("product_name", "")).strip()
-                raw_line = str(item.get("raw_line", "")).strip()
 
-                if product_name or raw_line:
-                    cleaned_manual_line_items.append(item)
+                if product_name:
+                    cleaned_manual_line_items.append(
+                        {
+                            "product_code": item.get("product_code", ""),
+                            "product_name": item.get("product_name", ""),
+                            "quantity": item.get("quantity", 0),
+                            "unit": item.get("unit", ""),
+                            "unit_price": item.get("unit_price", ""),
+                            "net_amount": "",
+                            "vat_rate": "",
+                            "vat_amount": "",
+                            "gross_amount": "",
+                            "line_total": item.get("line_total", ""),
+                            "raw_line": "",
+                        }
+                    )
 
             if not cleaned_manual_line_items:
                 st.error(t("product_required"))
