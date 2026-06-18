@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from database import (
+    StockValidationError,
     create_database_backup,
     delete_invoice,
     delete_manual_adjustment,
@@ -101,6 +102,19 @@ TEXT = {
         "manual_product_table": "Manual Product Lines",
         "save_manual_invoice": "Save Manual Invoice",
         "manual_invoice_saved": "Manual invoice saved successfully. Invoice ID",
+
+        "stock_error_header": "Invoice not saved: not enough stock",
+        "stock_error_explain": (
+            "This sale invoice would make one or more products go below zero. "
+            "Please check the product name, unit and quantity before saving."
+        ),
+        "stock_error_update_header": "Invoice type was not updated",
+        "stock_product": "Product",
+        "stock_code": "Code",
+        "stock_unit": "Unit",
+        "stock_current": "Current stock",
+        "stock_requested": "Sale quantity",
+        "stock_shortage": "Shortage",
 
         "inventory_header": "Inventory Dashboard",
         "invoices_saved": "Invoices Saved",
@@ -282,6 +296,19 @@ TEXT = {
         "manual_product_table": "Ręczne pozycje produktowe",
         "save_manual_invoice": "Zapisz ręczną fakturę",
         "manual_invoice_saved": "Ręczna faktura została zapisana. ID faktury",
+
+        "stock_error_header": "Faktura nie została zapisana: za mało towaru",
+        "stock_error_explain": (
+            "Ta faktura sprzedażowa spowodowałaby ujemny stan magazynowy. "
+            "Sprawdź nazwę produktu, jednostkę i ilość przed zapisaniem."
+        ),
+        "stock_error_update_header": "Typ faktury nie został zaktualizowany",
+        "stock_product": "Produkt",
+        "stock_code": "Kod",
+        "stock_unit": "Jednostka",
+        "stock_current": "Aktualny stan",
+        "stock_requested": "Ilość sprzedaży",
+        "stock_shortage": "Brakująca ilość",
 
         "inventory_header": "Magazyn",
         "invoices_saved": "Zapisane faktury",
@@ -553,6 +580,38 @@ def parse_date(date_text):
         dayfirst=True,
         errors="coerce"
     )
+
+
+def show_stock_validation_error(error, update_mode=False):
+    if update_mode:
+        st.error(t("stock_error_update_header"))
+    else:
+        st.error(t("stock_error_header"))
+
+    st.warning(t("stock_error_explain"))
+
+    issues = getattr(error, "issues", [])
+
+    if issues:
+        issues_df = pd.DataFrame(
+            [
+                {
+                    t("stock_code"): issue.get("product_code", ""),
+                    t("stock_product"): issue.get("product_name", ""),
+                    t("stock_unit"): issue.get("unit", ""),
+                    t("stock_current"): issue.get("current_stock", 0),
+                    t("stock_requested"): issue.get("requested_quantity", 0),
+                    t("stock_shortage"): issue.get("shortage", 0),
+                }
+                for issue in issues
+            ]
+        )
+
+        st.dataframe(
+            issues_df,
+            use_container_width=True,
+            hide_index=True
+        )
 
 
 def build_inventory_dataframe():
@@ -923,13 +982,17 @@ with tab_upload:
 
                     edited_line_items = edited_items_df.fillna("").to_dict("records")
 
-                    saved_invoice_id = save_invoice(
-                        invoice_data=invoice_data,
-                        line_items=edited_line_items
-                    )
+                    try:
+                        saved_invoice_id = save_invoice(
+                            invoice_data=invoice_data,
+                            line_items=edited_line_items
+                        )
 
-                    st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
-                    st.rerun()
+                        st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
+                        st.rerun()
+
+                    except StockValidationError as stock_error:
+                        show_stock_validation_error(stock_error)
 
             except Exception as error:
                 st.error(t("extract_error"))
@@ -1057,13 +1120,17 @@ with tab_upload:
             if not cleaned_manual_line_items:
                 st.error(t("product_required"))
             else:
-                saved_invoice_id = save_invoice(
-                    invoice_data=manual_invoice_data,
-                    line_items=cleaned_manual_line_items
-                )
+                try:
+                    saved_invoice_id = save_invoice(
+                        invoice_data=manual_invoice_data,
+                        line_items=cleaned_manual_line_items
+                    )
 
-                st.success(f"{t('manual_invoice_saved')}: {saved_invoice_id}")
-                st.rerun()
+                    st.success(f"{t('manual_invoice_saved')}: {saved_invoice_id}")
+                    st.rerun()
+
+                except StockValidationError as stock_error:
+                    show_stock_validation_error(stock_error)
 
 
 # --------------------------------------------------
@@ -1270,9 +1337,13 @@ with tab_history:
             corrected_type = "Sale"
 
         if st.button(t("update_invoice_type")):
-            update_invoice_type(correction_invoice_id, corrected_type)
-            st.success(t("invoice_type_updated"))
-            st.rerun()
+            try:
+                update_invoice_type(correction_invoice_id, corrected_type)
+                st.success(t("invoice_type_updated"))
+                st.rerun()
+
+            except StockValidationError as stock_error:
+                show_stock_validation_error(stock_error, update_mode=True)
 
         st.divider()
 

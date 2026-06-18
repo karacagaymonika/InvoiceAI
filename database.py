@@ -83,6 +83,59 @@ def init_db():
 
 
 # --------------------------------------------------
+# Custom safety error
+# --------------------------------------------------
+
+class StockValidationError(ValueError):
+    """
+    Raised when a sale invoice would make stock go below zero.
+    """
+
+    def __init__(self, issues):
+        self.issues = issues
+        message = format_stock_validation_error(issues)
+        super().__init__(message)
+
+
+def format_stock_validation_error(issues):
+    if not issues:
+        return ""
+
+    lines = [
+        "Not enough stock for this sale invoice.",
+        "Please check these product quantities before saving:",
+    ]
+
+    for issue in issues:
+        product_name = issue.get("product_name", "")
+        product_code = issue.get("product_code", "")
+        unit = issue.get("unit", "")
+        current_stock = issue.get("current_stock", 0)
+        requested_quantity = issue.get("requested_quantity", 0)
+        shortage = issue.get("shortage", 0)
+
+        label_parts = []
+
+        if product_code:
+            label_parts.append(f"Code: {product_code}")
+
+        if product_name:
+            label_parts.append(f"Product: {product_name}")
+
+        if unit:
+            label_parts.append(f"Unit: {unit}")
+
+        product_label = " | ".join(label_parts)
+
+        lines.append(
+            f"- {product_label}: current stock {current_stock}, "
+            f"sale quantity {requested_quantity}, shortage {shortage}"
+        )
+
+    return "\n".join(lines)
+
+
+# --------------------------------------------------
 # Backup functions
 # --------------------------------------------------
 
@@ -131,6 +184,34 @@ def get_backup_files():
 # Helper functions
 # --------------------------------------------------
 
+def clean_text(value):
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def normalize_key_value(value):
+    value = clean_text(value)
+    value = " ".join(value.split())
+    return value.lower()
+
+
+def make_inventory_key(product_code, product_name, unit):
+    """
+    Creates a consistent key for matching products.
+
+    This helps match products even if there are small differences in spacing
+    or capital letters.
+    """
+
+    return (
+        normalize_key_value(product_code),
+        normalize_key_value(product_name),
+        normalize_key_value(unit),
+    )
+
+
 def convert_quantity(value):
     if value is None:
         return 0
@@ -148,12 +229,307 @@ def convert_quantity(value):
         return 0
 
 
+def normalise_invoice_quantity(value):
+    """
+    Purchase and sale invoice quantities should be stored as positive numbers.
+    Sale logic deducts the quantity later during inventory calculation.
+    """
+
+    quantity = convert_quantity(value)
+
+    if quantity < 0:
+        quantity = abs(quantity)
+
+    return quantity
+
+
+def prepare_line_item_for_save(item):
+    product_code = clean_text(item.get("product_code", ""))
+    product_name = clean_text(item.get("product_name", ""))
+    raw_line = clean_text(item.get("raw_line", ""))
+
+    if not product_name and raw_line:
+        product_name = raw_line
+
+    return {
+        "product_code": product_code,
+        "product_name": product_name,
+        "quantity": normalise_invoice_quantity(item.get("quantity", 0)),
+        "unit": clean_text(item.get("unit", "")),
+        "unit_price": item.get("unit_price", ""),
+        "net_amount": item.get("net_amount", ""),
+        "vat_rate": item.get("vat_rate", ""),
+        "vat_amount": item.get("vat_amount", ""),
+        "gross_amount": item.get("gross_amount", ""),
+        "line_total": item.get("line_total", ""),
+        "raw_line": raw_line,
+    }
+
+
+def prepare_line_items_for_save(line_items):
+    cleaned_items = []
+
+    for item in line_items:
+        cleaned_item = prepare_line_item_for_save(item)
+
+        if not cleaned_item["product_name"]:
+            continue
+
+        cleaned_items.append(cleaned_item)
+
+    return cleaned_items
+
+
+# --------------------------------------------------
+# Inventory calculation helpers
+# --------------------------------------------------
+
+def build_inventory_dict(exclude_invoice_id=None):
+    """
+    Builds inventory dictionary.
+
+    exclude_invoice_id is used when checking whether changing an existing
+    invoice type would make stock negative.
+    """
+
+    init_db()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    if exclude_invoice_id is None:
+        cursor.execute(
+            """
+            SELECT
+                i.id,
+                i.invoice_type,
+                ii.product_code,
+                ii.product_name,
+                ii.quantity,
+                ii.unit
+            FROM invoice_items ii
+            JOIN invoices i ON ii.invoice_id = i.id
+            """
+        )
+        invoice_rows = cursor.fetchall()
+    else:
+        cursor.execute(
+            """
+            SELECT
+                i.id,
+                i.invoice_type,
+                ii.product_code,
+                ii.product_name,
+                ii.quantity,
+                ii.unit
+            FROM invoice_items ii
+            JOIN invoices i ON ii.invoice_id = i.id
+            WHERE i.id != ?
+            """,
+            (exclude_invoice_id,),
+        )
+        invoice_rows = cursor.fetchall()
+
+    cursor.execute(
+        """
+        SELECT
+            product_code,
+            product_name,
+            quantity_change,
+            unit
+        FROM inventory_adjustments
+        """
+    )
+
+    adjustment_rows = cursor.fetchall()
+
+    conn.close()
+
+    inventory = {}
+
+    for invoice_id, invoice_type, product_code, product_name, quantity, unit in invoice_rows:
+        product_code = clean_text(product_code)
+        product_name = clean_text(product_name)
+        unit = clean_text(unit)
+        quantity = normalise_invoice_quantity(quantity)
+
+        key = make_inventory_key(product_code, product_name, unit)
+
+        if key not in inventory:
+            inventory[key] = {
+                "product_code": product_code,
+                "product_name": product_name,
+                "unit": unit,
+                "current_stock": 0,
+            }
+
+        if invoice_type == "Purchase":
+            inventory[key]["current_stock"] += quantity
+        elif invoice_type == "Sale":
+            inventory[key]["current_stock"] -= quantity
+        else:
+            inventory[key]["current_stock"] += quantity
+
+    for product_code, product_name, quantity_change, unit in adjustment_rows:
+        product_code = clean_text(product_code)
+        product_name = clean_text(product_name)
+        unit = clean_text(unit)
+        quantity_change = convert_quantity(quantity_change)
+
+        key = make_inventory_key(product_code, product_name, unit)
+
+        if key not in inventory:
+            inventory[key] = {
+                "product_code": product_code,
+                "product_name": product_name,
+                "unit": unit,
+                "current_stock": 0,
+            }
+
+        inventory[key]["current_stock"] += quantity_change
+
+    return inventory
+
+
+def get_current_stock_for_product(product_code, product_name, unit, exclude_invoice_id=None):
+    inventory = build_inventory_dict(exclude_invoice_id=exclude_invoice_id)
+    key = make_inventory_key(product_code, product_name, unit)
+
+    if key not in inventory:
+        return 0
+
+    return inventory[key]["current_stock"]
+
+
+def validate_sale_invoice_stock(line_items, exclude_invoice_id=None):
+    """
+    Checks if a sale invoice would make stock go below zero.
+
+    Returns:
+    - [] if everything is okay
+    - list of issue dictionaries if stock is not enough
+    """
+
+    inventory = build_inventory_dict(exclude_invoice_id=exclude_invoice_id)
+
+    requested = {}
+    display_data = {}
+
+    cleaned_items = prepare_line_items_for_save(line_items)
+
+    for item in cleaned_items:
+        product_code = item["product_code"]
+        product_name = item["product_name"]
+        unit = item["unit"]
+        quantity = normalise_invoice_quantity(item["quantity"])
+
+        if quantity <= 0:
+            continue
+
+        key = make_inventory_key(product_code, product_name, unit)
+
+        if key not in requested:
+            requested[key] = 0
+            display_data[key] = {
+                "product_code": product_code,
+                "product_name": product_name,
+                "unit": unit,
+            }
+
+        requested[key] += quantity
+
+    issues = []
+
+    for key, requested_quantity in requested.items():
+        current_stock = 0
+
+        if key in inventory:
+            current_stock = inventory[key]["current_stock"]
+
+        if requested_quantity > current_stock:
+            shortage = requested_quantity - current_stock
+
+            issues.append(
+                {
+                    "product_code": display_data[key]["product_code"],
+                    "product_name": display_data[key]["product_name"],
+                    "unit": display_data[key]["unit"],
+                    "current_stock": current_stock,
+                    "requested_quantity": requested_quantity,
+                    "shortage": shortage,
+                }
+            )
+
+    return issues
+
+
+def get_invoice_line_items_as_dicts(invoice_id):
+    init_db()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            product_code,
+            product_name,
+            quantity,
+            unit,
+            unit_price,
+            net_amount,
+            vat_rate,
+            vat_amount,
+            gross_amount,
+            line_total,
+            raw_line
+        FROM invoice_items
+        WHERE invoice_id = ?
+        ORDER BY id
+        """,
+        (invoice_id,),
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    line_items = []
+
+    for row in rows:
+        line_items.append(
+            {
+                "product_code": row[0],
+                "product_name": row[1],
+                "quantity": row[2],
+                "unit": row[3],
+                "unit_price": row[4],
+                "net_amount": row[5],
+                "vat_rate": row[6],
+                "vat_amount": row[7],
+                "gross_amount": row[8],
+                "line_total": row[9],
+                "raw_line": row[10],
+            }
+        )
+
+    return line_items
+
+
 # --------------------------------------------------
 # Save invoice and invoice items
 # --------------------------------------------------
 
 def save_invoice(invoice_data, line_items):
     init_db()
+
+    invoice_type = clean_text(invoice_data.get("invoice_type", ""))
+    cleaned_line_items = prepare_line_items_for_save(line_items)
+
+    if invoice_type == "Sale":
+        stock_issues = validate_sale_invoice_stock(cleaned_line_items)
+
+        if stock_issues:
+            raise StockValidationError(stock_issues)
 
     # Safety backup before saving a new invoice
     create_database_backup("before_save_invoice")
@@ -177,7 +553,7 @@ def save_invoice(invoice_data, line_items):
         """,
         (
             invoice_data.get("file_name", ""),
-            invoice_data.get("invoice_type", ""),
+            invoice_type,
             invoice_data.get("document_number", ""),
             invoice_data.get("document_date", ""),
             invoice_data.get("supplier", ""),
@@ -189,17 +565,7 @@ def save_invoice(invoice_data, line_items):
 
     invoice_id = cursor.lastrowid
 
-    for item in line_items:
-        product_code = str(item.get("product_code", "")).strip()
-        product_name = str(item.get("product_name", "")).strip()
-        raw_line = str(item.get("raw_line", "")).strip()
-
-        if not product_name and raw_line:
-            product_name = raw_line
-
-        if not product_name:
-            continue
-
+    for item in cleaned_line_items:
         cursor.execute(
             """
             INSERT INTO invoice_items (
@@ -220,17 +586,17 @@ def save_invoice(invoice_data, line_items):
             """,
             (
                 invoice_id,
-                product_code,
-                product_name,
-                convert_quantity(item.get("quantity", 0)),
-                item.get("unit", ""),
-                item.get("unit_price", ""),
-                item.get("net_amount", ""),
-                item.get("vat_rate", ""),
-                item.get("vat_amount", ""),
-                item.get("gross_amount", ""),
-                item.get("line_total", ""),
-                raw_line,
+                item["product_code"],
+                item["product_name"],
+                item["quantity"],
+                item["unit"],
+                item["unit_price"],
+                item["net_amount"],
+                item["vat_rate"],
+                item["vat_amount"],
+                item["gross_amount"],
+                item["line_total"],
+                item["raw_line"],
             ),
         )
 
@@ -314,6 +680,19 @@ def get_invoice_items(invoice_id):
 def update_invoice_type(invoice_id, new_invoice_type):
     init_db()
 
+    new_invoice_type = clean_text(new_invoice_type)
+
+    if new_invoice_type == "Sale":
+        existing_line_items = get_invoice_line_items_as_dicts(invoice_id)
+
+        stock_issues = validate_sale_invoice_stock(
+            existing_line_items,
+            exclude_invoice_id=invoice_id,
+        )
+
+        if stock_issues:
+            raise StockValidationError(stock_issues)
+
     # Safety backup before changing invoice type
     create_database_backup("before_update_invoice_type")
 
@@ -391,11 +770,11 @@ def save_manual_adjustment(product_code, product_name, quantity_change, unit, re
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
-            str(product_code).strip(),
-            str(product_name).strip(),
+            clean_text(product_code),
+            clean_text(product_name),
             convert_quantity(quantity_change),
-            str(unit).strip(),
-            str(reason).strip(),
+            clean_text(unit),
+            clean_text(reason),
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
@@ -465,86 +844,20 @@ def get_inventory_summary():
     Manual adjustments can increase or decrease stock.
     """
 
-    init_db()
-
-    conn = connect_db()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            i.invoice_type,
-            ii.product_code,
-            ii.product_name,
-            ii.quantity,
-            ii.unit
-        FROM invoice_items ii
-        JOIN invoices i ON ii.invoice_id = i.id
-        """
-    )
-
-    invoice_rows = cursor.fetchall()
-
-    cursor.execute(
-        """
-        SELECT
-            product_code,
-            product_name,
-            quantity_change,
-            unit
-        FROM inventory_adjustments
-        """
-    )
-
-    adjustment_rows = cursor.fetchall()
-
-    conn.close()
-
-    inventory = {}
-
-    for invoice_type, product_code, product_name, quantity, unit in invoice_rows:
-        product_code = product_code or ""
-        product_name = product_name or ""
-        unit = unit or ""
-
-        key = (product_code, product_name, unit)
-
-        if key not in inventory:
-            inventory[key] = 0
-
-        quantity = convert_quantity(quantity)
-
-        if invoice_type == "Purchase":
-            inventory[key] += quantity
-        elif invoice_type == "Sale":
-            inventory[key] -= quantity
-        else:
-            inventory[key] += quantity
-
-    for product_code, product_name, quantity_change, unit in adjustment_rows:
-        product_code = product_code or ""
-        product_name = product_name or ""
-        unit = unit or ""
-
-        key = (product_code, product_name, unit)
-
-        if key not in inventory:
-            inventory[key] = 0
-
-        inventory[key] += convert_quantity(quantity_change)
+    inventory = build_inventory_dict()
 
     rows = []
 
-    for (product_code, product_name, unit), current_stock in inventory.items():
+    for item in inventory.values():
         rows.append(
             (
-                product_code,
-                product_name,
-                unit,
-                current_stock,
+                item["product_code"],
+                item["product_name"],
+                item["unit"],
+                item["current_stock"],
             )
         )
 
-    rows.sort(key=lambda row: row[1])
+    rows.sort(key=lambda row: row[1].lower() if row[1] else "")
 
     return rows
