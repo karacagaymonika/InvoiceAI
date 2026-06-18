@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 
 from database import (
-    StockValidationError,
     create_database_backup,
     delete_invoice,
     delete_manual_adjustment,
@@ -991,8 +990,11 @@ with tab_upload:
                         st.success(f"{t('invoice_saved')}: {saved_invoice_id}")
                         st.rerun()
 
-                    except StockValidationError as stock_error:
-                        show_stock_validation_error(stock_error)
+                    except Exception as stock_error:
+                        if hasattr(stock_error, "issues"):
+                            show_stock_validation_error(stock_error)
+                        else:
+                            st.exception(stock_error)
 
             except Exception as error:
                 st.error(t("extract_error"))
@@ -1129,8 +1131,11 @@ with tab_upload:
                     st.success(f"{t('manual_invoice_saved')}: {saved_invoice_id}")
                     st.rerun()
 
-                except StockValidationError as stock_error:
-                    show_stock_validation_error(stock_error)
+                except Exception as stock_error:
+                    if hasattr(stock_error, "issues"):
+                        show_stock_validation_error(stock_error)
+                    else:
+                        st.exception(stock_error)
 
 
 # --------------------------------------------------
@@ -1342,8 +1347,11 @@ with tab_history:
                 st.success(t("invoice_type_updated"))
                 st.rerun()
 
-            except StockValidationError as stock_error:
-                show_stock_validation_error(stock_error, update_mode=True)
+            except Exception as stock_error:
+                if hasattr(stock_error, "issues"):
+                    show_stock_validation_error(stock_error, update_mode=True)
+                else:
+                    st.exception(stock_error)
 
         st.divider()
 
