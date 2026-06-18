@@ -1,69 +1,125 @@
 # InvoiceAI / StockFlow
 
-**InvoiceAI / StockFlow** is a bilingual invoice processing and inventory management application built with Python and Streamlit.
+InvoiceAI / StockFlow is a Python and Streamlit application built to help small businesses process invoices, track stock, and export useful business data.
 
-The project started as a portfolio showcase for invoice automation, but it grew into a practical stock management tool inspired by a real small-business problem: keeping track of products bought and sold through invoices.
+The project started from a real family business need: making invoice and inventory management easier for my mum. It began as a portfolio project, but the goal is to build something practical, simple and useful for small business stock control.
 
-The app allows users to upload invoice PDFs, extract invoice and product information, classify invoices as purchases or sales, and automatically update inventory levels.
+## Live Demo
 
----
+Streamlit app:
+https://invoiceai-krfykjsda24swyptqjal2d.streamlit.app/
 
-## Features
+## Project Purpose
 
-### Invoice Processing
+Many small businesses still manage invoices, product quantities and stock manually. This can make it easy to lose track of:
 
-* Upload invoice PDF files
-* Extract invoice information from text
-* Extract product line items
-* Store invoices in a local database
-* View invoice history
-* Delete invoices when needed
+* what was bought
+* what was sold
+* how much stock is currently available
+* whether a product is running low
+* whether a sale would make stock go negative
 
-### Inventory Management
+InvoiceAI / StockFlow aims to make this easier by combining invoice processing, manual invoice entry, inventory tracking, basic financial summaries and Excel exports in one simple app.
 
-* Purchase invoices increase stock levels
-* Sale invoices decrease stock levels
-* Inventory dashboard showing product quantities
-* Manual stock adjustments
-* Delete manual stock adjustments
-* Stock movement tracking
+## Key Features
+
+### Invoice Entry
+
+The app supports two ways of adding invoices:
+
+* PDF invoice upload
+* Manual invoice entry
+
+The manual invoice entry screen is simplified for non-technical users and focuses on the most important fields:
+
+* product code
+* product name
+* quantity
+* unit
+* unit price
+* line total
+
+This makes it easier for a small business owner to enter invoices without being overwhelmed by technical fields.
+
+### Inventory Tracking
+
+Purchase invoices increase stock.
+
+Sale invoices decrease stock.
+
+The inventory dashboard shows:
+
+* products being tracked
+* current stock quantity
+* low-stock items
+* overall stock summary
+
+### Negative Stock Protection
+
+The app blocks sale invoices if there is not enough stock available.
+
+Example:
+
+* current stock: 3
+* sale invoice quantity: 5
+* result: invoice is not saved
+
+This helps prevent accidental stock errors.
 
 ### Financial Dashboard
 
-* View financial summaries
-* Monthly summaries
-* Yearly summaries
-* Track invoice values by type
+The financial dashboard gives a simple MVP-level view of:
 
-### Bilingual Interface
+* sales income
+* purchase costs
+* net result
+* cash impact
+* monthly summaries
+* yearly summaries
 
-* English interface
-* Polish interface
-* Easy language selection inside the app
+This is not full accounting software, but it gives a useful business overview.
 
----
+### Invoice History
 
-## Why I Built This Project
+Saved invoices can be reviewed in the invoice history section.
 
-I built this project because I wanted to create something practical, not only something that looks good in a portfolio.
+The app also allows invoice type correction if an invoice was accidentally saved as the wrong type.
 
-The original idea was simple invoice processing. After discussing it with my mum, I realised that small businesses often need more than just invoice storage. They also need a way to understand stock movement, especially when products are bought and sold through invoices.
+### Manual Stock Adjustments
 
-That is why I expanded the project into a combined invoice processing and inventory management tool.
+Manual stock adjustments can be used when stock needs correcting outside normal invoices, for example:
 
-This project helped me practise:
+* damaged items
+* missing stock
+* stock count corrections
+* stock added without an invoice
 
-* Python programming
-* Streamlit app development
-* Working with databases
-* OCR and text extraction
-* Data cleaning and structuring
-* Inventory logic
-* Financial summaries
-* Building a user-friendly interface
-* Creating bilingual software
+### Excel Exports
 
----
+The app can export business data to Excel, including:
+
+* full Excel report
+* inventory report
+* invoice history
+* financial summary
+* manual adjustments
+
+This gives the user an extra safety copy outside the app.
+
+### Database Backups
+
+The app includes database backup functionality.
+
+Backups can be created manually, and the app also creates safety backups before important database changes.
+
+### Polish and English Interface
+
+The app includes a bilingual interface:
+
+* Polish
+* English
+
+This makes the project more practical for real use in a family/small business setting.
 
 ## Tech Stack
 
@@ -71,11 +127,8 @@ This project helped me practise:
 * Streamlit
 * SQLite
 * Pandas
-* PDF text extraction
-* OCR support
+* OpenPyXL
 * Git and GitHub
-
----
 
 ## Project Structure
 
@@ -83,169 +136,98 @@ This project helped me practise:
 InvoiceAI/
 │
 ├── app.py              # Main Streamlit application
-├── database.py         # Database functions and stock logic
-├── extractor.py        # Invoice and product extraction logic
-├── ocr.py              # PDF text extraction / OCR logic
+├── database.py         # Database, inventory and stock validation logic
+├── extractor.py        # Invoice field and line item extraction logic
+├── ocr.py              # PDF text extraction logic
 ├── requirements.txt    # Python dependencies
 ├── README.md           # Project documentation
-├── .gitignore          # Files excluded from Git
 │
-├── invoices/           # Uploaded invoice files, ignored by Git
-└── venv/               # Virtual environment, ignored by Git
+├── data/               # Local SQLite database folder
+├── backups/            # Local database backups
+└── invoices/           # Uploaded invoice files
 ```
 
----
+## How to Run Locally
 
-## How the App Works
-
-1. The user uploads an invoice PDF.
-2. The app extracts invoice text from the PDF.
-3. Invoice fields and product line items are detected.
-4. The user selects whether the invoice is a purchase invoice or a sale invoice.
-5. The invoice is saved into the database.
-6. Stock levels are updated automatically:
-
-   * purchase invoice = stock increases
-   * sale invoice = stock decreases
-7. The user can view dashboards, history, summaries, and inventory movement.
-
----
-
-## Example Use Cases
-
-This project could be useful for:
-
-* Small shops
-* Family businesses
-* Sole traders
-* Inventory-based businesses
-* Portfolio demonstration for automation and data roles
-* Document processing and workflow automation examples
-
----
-
-## Current Status
-
-The app is currently working and includes:
-
-* Invoice upload
-* Product extraction
-* Purchase invoice stock increase
-* Sale invoice stock deduction
-* Inventory dashboard
-* Financial dashboard
-* Monthly summaries
-* Yearly summaries
-* Invoice history
-* Delete invoice function
-* Manual stock adjustments
-* Delete manual adjustments
-* Polish / English interface
-
----
-
-## Future Improvements
-
-Planned future improvements include:
-
-* Improved invoice field extraction accuracy
-* Better support for different invoice layouts
-* Export inventory and financial reports to Excel
-* User login system
-* Cloud database option
-* Supplier and customer management
-* Low-stock alerts
-* Better product matching
-* More advanced analytics dashboard
-* Deployment online
-
----
-
-## Screenshots
-
-Screenshots will be added later as the project interface becomes more polished.
-
-Planned screenshots:
-
-* Upload invoice page
-* Inventory dashboard
-* Financial dashboard
-* Invoice history
-* Polish interface
-
----
-
-## How to Run the Project Locally
-
-### 1. Clone the repository
+Clone the repository:
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_LINK
+git clone https://github.com/karacagaymonika/InvoiceAI.git
 ```
 
-### 2. Open the project folder
+Go into the project folder:
 
 ```bash
 cd InvoiceAI
 ```
 
-### 3. Create a virtual environment
+Create and activate a virtual environment:
 
 ```bash
 python -m venv venv
 ```
 
-### 4. Activate the virtual environment
-
-On Windows:
+Activate it on Windows:
 
 ```bash
 venv\Scripts\activate
 ```
 
-### 5. Install dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 6. Run the Streamlit app
+Run the app:
 
 ```bash
 streamlit run app.py
 ```
 
----
-
 ## Important Note
 
-This project is for learning, portfolio development, and demonstration purposes.
+This is currently a demo/MVP project.
 
-It currently uses test or example invoice data only. It should not be used for real financial, legal, tax, or accounting decisions without further validation and professional review.
+The app is suitable for:
 
----
+* portfolio demonstration
+* testing
+* small business workflow exploration
+* learning Python, Streamlit, data handling and automation
+
+Before using it as a real daily business system, the database should be moved from local SQLite to a proper online database such as Supabase/PostgreSQL.
+
+## Future Improvements
+
+Planned improvements include:
+
+* product categories
+* low-stock thresholds by product/category
+* improved product master list
+* user login
+* online PostgreSQL/Supabase database
+* improved PDF invoice extraction
+* better reporting dashboard
+* product-level profit calculations
+* VAT handling
+* sales and purchase trend charts
 
 ## What I Learned
 
-While building this project, I learned how to turn a real-life business problem into a working software tool.
+Through this project, I practised:
 
-I improved my understanding of:
+* building a real Streamlit application
+* using SQLite for structured data storage
+* creating inventory logic
+* preventing negative stock
+* exporting data to Excel
+* building bilingual UI text
+* using Git branches for feature development
+* improving a project step by step based on real user needs
 
-* Python application structure
-* Streamlit layouts and dashboards
-* Database design using SQLite
-* Inventory calculations
-* Invoice data extraction
-* Git version control
-* Debugging and improving code step by step
-* Building a project that solves a real problem
+## Project Status
 
----
+Current status: active MVP development.
 
-## Author
-
-**Monika Sandra Karacagay**
-
-Aspiring AI & Data Science professional with a background in document control, process management, and business administration.
-
-I am building practical automation and data projects to solve real business problems and develop my portfolio.
+The app currently supports invoice entry, inventory tracking, negative stock protection, Excel exports, database backups and bilingual Polish/English use.
