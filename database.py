@@ -3,24 +3,21 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-
-# --------------------------------------------------
-# Database setup
-# --------------------------------------------------
-
 BASE_DIR = Path(__file__).parent
-
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
-
 BACKUP_DIR = BASE_DIR / "backups"
 BACKUP_DIR.mkdir(exist_ok=True)
-
 DB_PATH = DATA_DIR / "invoice_ai.db"
 
 
 def connect_db():
     return sqlite3.connect(DB_PATH)
+
+
+def column_exists(cursor, table_name, column_name):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return column_name in [row[1] for row in cursor.fetchall()]
 
 
 def init_db():
@@ -38,6 +35,7 @@ def init_db():
             supplier TEXT,
             buyer TEXT,
             total_amount TEXT,
+            is_paid INTEGER DEFAULT 0,
             created_at TEXT
         )
         """
@@ -48,6 +46,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS invoice_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             invoice_id INTEGER,
+            item_type TEXT DEFAULT 'stock_product',
             product_code TEXT,
             product_name TEXT,
             quantity REAL,
@@ -78,133 +77,69 @@ def init_db():
         """
     )
 
+    if not column_exists(cursor, "invoices", "is_paid"):
+        cursor.execute(
+            "ALTER TABLE invoices ADD COLUMN is_paid INTEGER DEFAULT 0"
+        )
+
+    if not column_exists(cursor, "invoice_items", "item_type"):
+        cursor.execute(
+            "ALTER TABLE invoice_items "
+            "ADD COLUMN item_type TEXT DEFAULT 'stock_product'"
+        )
+
+    cursor.execute(
+        """
+        UPDATE invoice_items
+        SET item_type = 'stock_product'
+        WHERE item_type IS NULL OR TRIM(item_type) = ''
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE invoices
+        SET is_paid = 0
+        WHERE is_paid IS NULL
+        """
+    )
+
     conn.commit()
     conn.close()
 
 
-# --------------------------------------------------
-# Custom safety error
-# --------------------------------------------------
-
 class StockValidationError(ValueError):
-    """
-    Raised when a sale invoice would make stock go below zero.
-    """
-
     def __init__(self, issues):
         self.issues = issues
-        message = format_stock_validation_error(issues)
-        super().__init__(message)
+        super().__init__("Not enough stock for this sale invoice.")
 
-
-def format_stock_validation_error(issues):
-    if not issues:
-        return ""
-
-    lines = [
-        "Not enough stock for this sale invoice.",
-        "Please check these product quantities before saving:",
-    ]
-
-    for issue in issues:
-        product_name = issue.get("product_name", "")
-        product_code = issue.get("product_code", "")
-        unit = issue.get("unit", "")
-        current_stock = issue.get("current_stock", 0)
-        requested_quantity = issue.get("requested_quantity", 0)
-        shortage = issue.get("shortage", 0)
-
-        label_parts = []
-
-        if product_code:
-            label_parts.append(f"Code: {product_code}")
-
-        if product_name:
-            label_parts.append(f"Product: {product_name}")
-
-        if unit:
-            label_parts.append(f"Unit: {unit}")
-
-        product_label = " | ".join(label_parts)
-
-        lines.append(
-            f"- {product_label}: current stock {current_stock}, "
-            f"sale quantity {requested_quantity}, shortage {shortage}"
-        )
-
-    return "\n".join(lines)
-
-
-# --------------------------------------------------
-# Backup functions
-# --------------------------------------------------
 
 def create_database_backup(reason="manual"):
-    """
-    Creates a timestamped backup copy of the SQLite database.
-
-    reason examples:
-    - manual
-    - before_save_invoice
-    - before_delete_invoice
-    - before_manual_adjustment
-    - before_delete_adjustment
-    """
-
     init_db()
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_reason = str(reason).strip().replace(" ", "_").lower()
-
     backup_file = BACKUP_DIR / f"invoice_ai_backup_{safe_reason}_{timestamp}.db"
-
     shutil.copy2(DB_PATH, backup_file)
-
     return backup_file
 
 
 def get_backup_files():
-    """
-    Returns a list of backup database files.
-    Newest backups are shown first.
-    """
-
     BACKUP_DIR.mkdir(exist_ok=True)
-
-    backup_files = sorted(
+    return sorted(
         BACKUP_DIR.glob("invoice_ai_backup_*.db"),
         key=lambda file: file.stat().st_mtime,
         reverse=True,
     )
 
-    return backup_files
-
-
-# --------------------------------------------------
-# Helper functions
-# --------------------------------------------------
 
 def clean_text(value):
-    if value is None:
-        return ""
-
-    return str(value).strip()
+    return "" if value is None else str(value).strip()
 
 
 def normalize_key_value(value):
-    value = clean_text(value)
-    value = " ".join(value.split())
-    return value.lower()
+    return " ".join(clean_text(value).split()).lower()
 
 
 def make_inventory_key(product_code, product_name, unit):
-    """
-    Creates a consistent key for matching products.
-
-    This helps match products even if there are small differences in spacing
-    or capital letters.
-    """
-
     return (
         normalize_key_value(product_code),
         normalize_key_value(product_name),
@@ -214,33 +149,59 @@ def make_inventory_key(product_code, product_name, unit):
 
 def convert_quantity(value):
     if value is None:
-        return 0
+        return 0.0
 
-    value = str(value).strip()
-
-    if value == "":
-        return 0
-
-    value = value.replace(",", ".")
+    value = str(value).strip().replace(",", ".")
+    if not value:
+        return 0.0
 
     try:
         return float(value)
     except ValueError:
-        return 0
+        return 0.0
 
 
-def normalise_invoice_quantity(value):
-    """
-    Purchase and sale invoice quantities should be stored as positive numbers.
-    Sale logic deducts the quantity later during inventory calculation.
-    """
+def normalize_invoice_quantity(value):
+    return abs(convert_quantity(value))
 
-    quantity = convert_quantity(value)
 
-    if quantity < 0:
-        quantity = abs(quantity)
+def normalize_item_type(value):
+    normalized = normalize_key_value(value)
 
-    return quantity
+    mapping = {
+        "stock_product": "stock_product",
+        "stock product": "stock_product",
+        "towar do magazynu": "stock_product",
+        "towar": "stock_product",
+        "auxiliary_material": "auxiliary_material",
+        "auxiliary material": "auxiliary_material",
+        "materiał pomocniczy": "auxiliary_material",
+        "material pomocniczy": "auxiliary_material",
+        "shipping_cost": "shipping_cost",
+        "shipping / courier": "shipping_cost",
+        "shipping/courier": "shipping_cost",
+        "wysyłka / kurier": "shipping_cost",
+        "wysylka / kurier": "shipping_cost",
+        "kurier": "shipping_cost",
+        "other_cost": "other_cost",
+        "other cost": "other_cost",
+        "inny koszt": "other_cost",
+    }
+
+    return mapping.get(normalized, "stock_product")
+
+
+def normalize_paid_value(value):
+    if isinstance(value, bool):
+        return 1 if value else 0
+
+    normalized = normalize_key_value(value)
+    if normalized in {
+        "1", "true", "yes", "y", "tak", "paid", "opłacona", "oplacona"
+    }:
+        return 1
+
+    return 0
 
 
 def prepare_line_item_for_save(item):
@@ -252,9 +213,10 @@ def prepare_line_item_for_save(item):
         product_name = raw_line
 
     return {
+        "item_type": normalize_item_type(item.get("item_type", "stock_product")),
         "product_code": product_code,
         "product_name": product_name,
-        "quantity": normalise_invoice_quantity(item.get("quantity", 0)),
+        "quantity": normalize_invoice_quantity(item.get("quantity", 0)),
         "unit": clean_text(item.get("unit", "")),
         "unit_price": item.get("unit_price", ""),
         "net_amount": item.get("net_amount", ""),
@@ -271,64 +233,38 @@ def prepare_line_items_for_save(line_items):
 
     for item in line_items:
         cleaned_item = prepare_line_item_for_save(item)
-
-        if not cleaned_item["product_name"]:
-            continue
-
-        cleaned_items.append(cleaned_item)
+        if cleaned_item["product_name"]:
+            cleaned_items.append(cleaned_item)
 
     return cleaned_items
 
 
-# --------------------------------------------------
-# Inventory calculation helpers
-# --------------------------------------------------
-
 def build_inventory_dict(exclude_invoice_id=None):
-    """
-    Builds inventory dictionary.
-
-    exclude_invoice_id is used when checking whether changing an existing
-    invoice type would make stock negative.
-    """
-
     init_db()
 
     conn = connect_db()
     cursor = conn.cursor()
 
-    if exclude_invoice_id is None:
-        cursor.execute(
-            """
-            SELECT
-                i.id,
-                i.invoice_type,
-                ii.product_code,
-                ii.product_name,
-                ii.quantity,
-                ii.unit
-            FROM invoice_items ii
-            JOIN invoices i ON ii.invoice_id = i.id
-            """
-        )
-        invoice_rows = cursor.fetchall()
-    else:
-        cursor.execute(
-            """
-            SELECT
-                i.id,
-                i.invoice_type,
-                ii.product_code,
-                ii.product_name,
-                ii.quantity,
-                ii.unit
-            FROM invoice_items ii
-            JOIN invoices i ON ii.invoice_id = i.id
-            WHERE i.id != ?
-            """,
-            (exclude_invoice_id,),
-        )
-        invoice_rows = cursor.fetchall()
+    query = """
+        SELECT
+            i.id,
+            i.invoice_type,
+            ii.item_type,
+            ii.product_code,
+            ii.product_name,
+            ii.quantity,
+            ii.unit
+        FROM invoice_items ii
+        JOIN invoices i ON ii.invoice_id = i.id
+    """
+    params = ()
+
+    if exclude_invoice_id is not None:
+        query += " WHERE i.id != ?"
+        params = (exclude_invoice_id,)
+
+    cursor.execute(query, params)
+    invoice_rows = cursor.fetchall()
 
     cursor.execute(
         """
@@ -340,19 +276,27 @@ def build_inventory_dict(exclude_invoice_id=None):
         FROM inventory_adjustments
         """
     )
-
     adjustment_rows = cursor.fetchall()
-
     conn.close()
 
     inventory = {}
 
-    for invoice_id, invoice_type, product_code, product_name, quantity, unit in invoice_rows:
+    for (
+        invoice_id,
+        invoice_type,
+        item_type,
+        product_code,
+        product_name,
+        quantity,
+        unit,
+    ) in invoice_rows:
+        if normalize_item_type(item_type) != "stock_product":
+            continue
+
         product_code = clean_text(product_code)
         product_name = clean_text(product_name)
         unit = clean_text(unit)
-        quantity = normalise_invoice_quantity(quantity)
-
+        quantity = normalize_invoice_quantity(quantity)
         key = make_inventory_key(product_code, product_name, unit)
 
         if key not in inventory:
@@ -360,7 +304,7 @@ def build_inventory_dict(exclude_invoice_id=None):
                 "product_code": product_code,
                 "product_name": product_name,
                 "unit": unit,
-                "current_stock": 0,
+                "current_stock": 0.0,
             }
 
         if invoice_type == "Purchase":
@@ -374,8 +318,6 @@ def build_inventory_dict(exclude_invoice_id=None):
         product_code = clean_text(product_code)
         product_name = clean_text(product_name)
         unit = clean_text(unit)
-        quantity_change = convert_quantity(quantity_change)
-
         key = make_inventory_key(product_code, product_name, unit)
 
         if key not in inventory:
@@ -383,72 +325,46 @@ def build_inventory_dict(exclude_invoice_id=None):
                 "product_code": product_code,
                 "product_name": product_name,
                 "unit": unit,
-                "current_stock": 0,
+                "current_stock": 0.0,
             }
 
-        inventory[key]["current_stock"] += quantity_change
+        inventory[key]["current_stock"] += convert_quantity(quantity_change)
 
     return inventory
 
 
-def get_current_stock_for_product(product_code, product_name, unit, exclude_invoice_id=None):
-    inventory = build_inventory_dict(exclude_invoice_id=exclude_invoice_id)
-    key = make_inventory_key(product_code, product_name, unit)
-
-    if key not in inventory:
-        return 0
-
-    return inventory[key]["current_stock"]
-
-
 def validate_sale_invoice_stock(line_items, exclude_invoice_id=None):
-    """
-    Checks if a sale invoice would make stock go below zero.
-
-    Returns:
-    - [] if everything is okay
-    - list of issue dictionaries if stock is not enough
-    """
-
     inventory = build_inventory_dict(exclude_invoice_id=exclude_invoice_id)
-
     requested = {}
     display_data = {}
 
-    cleaned_items = prepare_line_items_for_save(line_items)
+    for item in prepare_line_items_for_save(line_items):
+        if item["item_type"] != "stock_product":
+            continue
 
-    for item in cleaned_items:
-        product_code = item["product_code"]
-        product_name = item["product_name"]
-        unit = item["unit"]
-        quantity = normalise_invoice_quantity(item["quantity"])
-
+        quantity = normalize_invoice_quantity(item["quantity"])
         if quantity <= 0:
             continue
 
-        key = make_inventory_key(product_code, product_name, unit)
+        key = make_inventory_key(
+            item["product_code"],
+            item["product_name"],
+            item["unit"],
+        )
 
-        if key not in requested:
-            requested[key] = 0
-            display_data[key] = {
-                "product_code": product_code,
-                "product_name": product_name,
-                "unit": unit,
-            }
-
-        requested[key] += quantity
+        requested[key] = requested.get(key, 0.0) + quantity
+        display_data[key] = {
+            "product_code": item["product_code"],
+            "product_name": item["product_name"],
+            "unit": item["unit"],
+        }
 
     issues = []
 
     for key, requested_quantity in requested.items():
-        current_stock = 0
-
-        if key in inventory:
-            current_stock = inventory[key]["current_stock"]
+        current_stock = inventory.get(key, {}).get("current_stock", 0.0)
 
         if requested_quantity > current_stock:
-            shortage = requested_quantity - current_stock
-
             issues.append(
                 {
                     "product_code": display_data[key]["product_code"],
@@ -456,7 +372,7 @@ def validate_sale_invoice_stock(line_items, exclude_invoice_id=None):
                     "unit": display_data[key]["unit"],
                     "current_stock": current_stock,
                     "requested_quantity": requested_quantity,
-                    "shortage": shortage,
+                    "shortage": requested_quantity - current_stock,
                 }
             )
 
@@ -468,10 +384,10 @@ def get_invoice_line_items_as_dicts(invoice_id):
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT
+            item_type,
             product_code,
             product_name,
             quantity,
@@ -489,54 +405,44 @@ def get_invoice_line_items_as_dicts(invoice_id):
         """,
         (invoice_id,),
     )
-
     rows = cursor.fetchall()
     conn.close()
 
-    line_items = []
+    return [
+        {
+            "item_type": row[0],
+            "product_code": row[1],
+            "product_name": row[2],
+            "quantity": row[3],
+            "unit": row[4],
+            "unit_price": row[5],
+            "net_amount": row[6],
+            "vat_rate": row[7],
+            "vat_amount": row[8],
+            "gross_amount": row[9],
+            "line_total": row[10],
+            "raw_line": row[11],
+        }
+        for row in rows
+    ]
 
-    for row in rows:
-        line_items.append(
-            {
-                "product_code": row[0],
-                "product_name": row[1],
-                "quantity": row[2],
-                "unit": row[3],
-                "unit_price": row[4],
-                "net_amount": row[5],
-                "vat_rate": row[6],
-                "vat_amount": row[7],
-                "gross_amount": row[8],
-                "line_total": row[9],
-                "raw_line": row[10],
-            }
-        )
-
-    return line_items
-
-
-# --------------------------------------------------
-# Save invoice and invoice items
-# --------------------------------------------------
 
 def save_invoice(invoice_data, line_items):
     init_db()
 
     invoice_type = clean_text(invoice_data.get("invoice_type", ""))
+    is_paid = normalize_paid_value(invoice_data.get("is_paid", False))
     cleaned_line_items = prepare_line_items_for_save(line_items)
 
     if invoice_type == "Sale":
-        stock_issues = validate_sale_invoice_stock(cleaned_line_items)
+        issues = validate_sale_invoice_stock(cleaned_line_items)
+        if issues:
+            raise StockValidationError(issues)
 
-        if stock_issues:
-            raise StockValidationError(stock_issues)
-
-    # Safety backup before saving a new invoice
     create_database_backup("before_save_invoice")
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         INSERT INTO invoices (
@@ -547,9 +453,10 @@ def save_invoice(invoice_data, line_items):
             supplier,
             buyer,
             total_amount,
+            is_paid,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             invoice_data.get("file_name", ""),
@@ -559,6 +466,7 @@ def save_invoice(invoice_data, line_items):
             invoice_data.get("supplier", ""),
             invoice_data.get("buyer", ""),
             invoice_data.get("total_amount", ""),
+            is_paid,
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
@@ -570,6 +478,7 @@ def save_invoice(invoice_data, line_items):
             """
             INSERT INTO invoice_items (
                 invoice_id,
+                item_type,
                 product_code,
                 product_name,
                 quantity,
@@ -582,10 +491,11 @@ def save_invoice(invoice_data, line_items):
                 line_total,
                 raw_line
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 invoice_id,
+                item["item_type"],
                 item["product_code"],
                 item["product_name"],
                 item["quantity"],
@@ -602,20 +512,14 @@ def save_invoice(invoice_data, line_items):
 
     conn.commit()
     conn.close()
-
     return invoice_id
 
-
-# --------------------------------------------------
-# Read invoice data
-# --------------------------------------------------
 
 def get_invoices():
     init_db()
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT
@@ -627,15 +531,14 @@ def get_invoices():
             supplier,
             buyer,
             total_amount,
+            is_paid,
             created_at
         FROM invoices
         ORDER BY id DESC
         """
     )
-
     rows = cursor.fetchall()
     conn.close()
-
     return rows
 
 
@@ -644,11 +547,11 @@ def get_invoice_items(invoice_id):
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT
             id,
+            item_type,
             product_code,
             product_name,
             quantity,
@@ -666,97 +569,101 @@ def get_invoice_items(invoice_id):
         """,
         (invoice_id,),
     )
-
     rows = cursor.fetchall()
     conn.close()
-
     return rows
 
 
-# --------------------------------------------------
-# Update and delete invoices
-# --------------------------------------------------
+def get_all_invoice_items():
+    init_db()
+
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            ii.id,
+            ii.invoice_id,
+            i.document_number,
+            i.invoice_type,
+            ii.item_type,
+            ii.product_code,
+            ii.product_name,
+            ii.quantity,
+            ii.unit,
+            ii.unit_price,
+            ii.net_amount,
+            ii.vat_rate,
+            ii.vat_amount,
+            ii.gross_amount,
+            ii.line_total,
+            ii.raw_line
+        FROM invoice_items ii
+        JOIN invoices i ON ii.invoice_id = i.id
+        ORDER BY ii.id DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 
 def update_invoice_type(invoice_id, new_invoice_type):
     init_db()
-
     new_invoice_type = clean_text(new_invoice_type)
 
     if new_invoice_type == "Sale":
-        existing_line_items = get_invoice_line_items_as_dicts(invoice_id)
-
-        stock_issues = validate_sale_invoice_stock(
-            existing_line_items,
+        issues = validate_sale_invoice_stock(
+            get_invoice_line_items_as_dicts(invoice_id),
             exclude_invoice_id=invoice_id,
         )
+        if issues:
+            raise StockValidationError(issues)
 
-        if stock_issues:
-            raise StockValidationError(stock_issues)
-
-    # Safety backup before changing invoice type
     create_database_backup("before_update_invoice_type")
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
-        """
-        UPDATE invoices
-        SET invoice_type = ?
-        WHERE id = ?
-        """,
-        (
-            new_invoice_type,
-            invoice_id,
-        ),
+        "UPDATE invoices SET invoice_type = ? WHERE id = ?",
+        (new_invoice_type, invoice_id),
     )
+    conn.commit()
+    conn.close()
 
+
+def update_invoice_paid_status(invoice_id, is_paid):
+    init_db()
+    create_database_backup("before_update_paid_status")
+
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE invoices SET is_paid = ? WHERE id = ?",
+        (normalize_paid_value(is_paid), invoice_id),
+    )
     conn.commit()
     conn.close()
 
 
 def delete_invoice(invoice_id):
     init_db()
-
-    # Safety backup before deleting invoice
     create_database_backup("before_delete_invoice")
 
     conn = connect_db()
     cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        DELETE FROM invoice_items
-        WHERE invoice_id = ?
-        """,
-        (invoice_id,),
-    )
-
-    cursor.execute(
-        """
-        DELETE FROM invoices
-        WHERE id = ?
-        """,
-        (invoice_id,),
-    )
-
+    cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (invoice_id,))
+    cursor.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
     conn.commit()
     conn.close()
 
 
-# --------------------------------------------------
-# Manual inventory adjustments
-# --------------------------------------------------
-
 def save_manual_adjustment(product_code, product_name, quantity_change, unit, reason):
     init_db()
-
-    # Safety backup before manual stock adjustment
     create_database_backup("before_manual_adjustment")
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         INSERT INTO inventory_adjustments (
@@ -778,7 +685,6 @@ def save_manual_adjustment(product_code, product_name, quantity_change, unit, re
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
-
     conn.commit()
     conn.close()
 
@@ -788,7 +694,6 @@ def get_manual_adjustments():
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT
@@ -803,61 +708,35 @@ def get_manual_adjustments():
         ORDER BY id DESC
         """
     )
-
     rows = cursor.fetchall()
     conn.close()
-
     return rows
 
 
 def delete_manual_adjustment(adjustment_id):
     init_db()
-
-    # Safety backup before deleting adjustment
     create_database_backup("before_delete_adjustment")
 
     conn = connect_db()
     cursor = conn.cursor()
-
     cursor.execute(
-        """
-        DELETE FROM inventory_adjustments
-        WHERE id = ?
-        """,
+        "DELETE FROM inventory_adjustments WHERE id = ?",
         (adjustment_id,),
     )
-
     conn.commit()
     conn.close()
 
 
-# --------------------------------------------------
-# Inventory calculation
-# --------------------------------------------------
-
 def get_inventory_summary():
-    """
-    Calculates current stock.
-
-    Purchase invoice = stock increases.
-    Sale invoice = stock decreases.
-    Manual adjustments can increase or decrease stock.
-    """
-
-    inventory = build_inventory_dict()
-
-    rows = []
-
-    for item in inventory.values():
-        rows.append(
-            (
-                item["product_code"],
-                item["product_name"],
-                item["unit"],
-                item["current_stock"],
-            )
+    rows = [
+        (
+            item["product_code"],
+            item["product_name"],
+            item["unit"],
+            item["current_stock"],
         )
+        for item in build_inventory_dict().values()
+    ]
 
     rows.sort(key=lambda row: row[1].lower() if row[1] else "")
-
     return rows
